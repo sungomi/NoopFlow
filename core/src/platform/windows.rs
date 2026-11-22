@@ -127,7 +127,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LR
     let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
     let ext = info.flags & LLKHF_EXTENDED != 0;
     // AltGr's fake LCtrl and the fake shifts around extended keys.
-    if info.scanCode & 0x200 != 0 || (ext && (info.scanCode == 0x2A || info.scanCode == 0x36)) || info.vkCode == 0xFF {
+    if info.scanCode & 0x200 != 0 || keys::is_fake_shift(info.scanCode, ext) || info.vkCode == 0xFF {
         return 1;
     }
     if let Some(h) = keys::from_win(info.scanCode, ext, info.vkCode) {

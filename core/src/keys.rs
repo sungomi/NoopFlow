@@ -137,6 +137,14 @@ const VK_NUMLOCK: u32 = 0x90;
 const VK_HANGUL: u32 = 0x15;
 const VK_HANJA: u32 = 0x19;
 
+/// True for the shift Windows injects around navigation keys when NumLock is on
+/// (scancode E0 2A). Real Shift keys never carry the extended flag with 0x2A;
+/// note that a real *right* Shift may be reported as extended 0x36 on some
+/// keyboards, so that one must not be dropped.
+pub fn is_fake_shift(scan: u32, extended: bool) -> bool {
+    extended && (scan & 0xFF) == 0x2A
+}
+
 /// Windows low-level hook -> HID.
 pub fn from_win(scan: u32, extended: bool, vk: u32) -> Option<Hid> {
     match vk {
@@ -144,6 +152,15 @@ pub fn from_win(scan: u32, extended: bool, vk: u32) -> Option<Hid> {
         VK_HANJA => return Some(hid::LANG2),
         VK_PAUSE => return Some(hid::PAUSE),
         VK_NUMLOCK => return Some(hid::NUM_LOCK),
+        // Modifiers: the hook's left/right virtual keys are reliable, scancode flags are not.
+        0xA0 => return Some(hid::LSHIFT),
+        0xA1 => return Some(hid::RSHIFT),
+        0xA2 => return Some(hid::LCTRL),
+        0xA3 => return Some(hid::RCTRL),
+        0xA4 => return Some(hid::LALT),
+        0xA5 => return Some(hid::RALT),
+        0x5B => return Some(hid::LGUI),
+        0x5C => return Some(hid::RGUI),
         _ => {}
     }
     let scan = (scan & 0xFF) as u16;
@@ -248,6 +265,19 @@ mod tests {
         assert_eq!(map_cross_os(hid::C, "position"), hid::C);
         assert_eq!(map_cross_os(hid::LCTRL, "ctrl_cmd"), hid::LGUI);
         assert_eq!(map_cross_os(hid::LALT, "none"), hid::LALT);
+    }
+
+    #[test]
+    fn right_shift_even_when_flagged_extended() {
+        // Plain and "extended" right Shift both map to RSHIFT.
+        assert_eq!(from_win(0x36, false, 0xA1), Some(hid::RSHIFT));
+        assert_eq!(from_win(0x36, true, 0xA1), Some(hid::RSHIFT));
+        assert!(!is_fake_shift(0x36, true));
+        // The NumLock fake shift (E0 2A) is dropped; a real left Shift is not.
+        assert!(is_fake_shift(0x2A, true));
+        assert!(!is_fake_shift(0x2A, false));
+        assert_eq!(from_win(0x2A, false, 0xA0), Some(hid::LSHIFT));
+        assert_eq!(from_win(0x1D, true, 0xA3), Some(hid::RCTRL));
     }
 
     #[test]
