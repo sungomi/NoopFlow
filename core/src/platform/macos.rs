@@ -259,7 +259,8 @@ unsafe extern "C" fn tap_cb(_proxy: *mut c_void, etype: u32, ev: CGEventRef, _us
                 return null_mut();
             }
             let mask = SHARED.neighbors.load(Ordering::Relaxed);
-            if mask != 0 {
+            // Only plain moves switch screens: a drag would leave the button held here.
+            if mask != 0 && etype == MOUSE_MOVED {
                 let loc = CGEventGetLocation(ev);
                 let mut st = STATE.lock().unwrap();
                 let b = bbox(&mut st);

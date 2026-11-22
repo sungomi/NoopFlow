@@ -1038,8 +1038,10 @@ impl Engine {
             return;
         }
 
-        // Ctrl/⌘+V on the other computer sends files copied here.
-        if down && code == hid::V && (ctrl || gui) && self.cfg.settings.paste_files {
+        // A paste on the other computer sends files copied here. Which physical
+        // modifier means "paste" there depends on its key layout (with the default
+        // layout a Windows keyboard pastes on a Mac with Alt+V), so accept any.
+        if down && code == hid::V && (ctrl || gui || alt) && !shift && self.cfg.settings.paste_files {
             let copied = self.clip.copied_files.lock().unwrap().clone();
             if let Some((paths, at)) = copied {
                 if self.last_paste_copy != Some(at) && at.elapsed() < Duration::from_secs(30 * 60) {

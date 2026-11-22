@@ -1,6 +1,6 @@
 [package]
 name = "noopflow"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "NoopFlow - one keyboard and mouse for your Windows and Mac"
 license = "MIT"
