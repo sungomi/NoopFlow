@@ -8,10 +8,10 @@
   --text: #171a2b;
   --text-2: #5b6078;
   --text-3: #9095ab;
-  --accent: #635bff;
-  --accent-2: #22c6e8;
-  --accent-soft: rgba(99, 91, 255, 0.1);
-  --grad: linear-gradient(135deg, #635bff 0%, #4f8bff 55%, #22c6e8 100%);
+  --accent: #5b67f5;
+  --accent-2: #8a94ff;
+  --accent-soft: rgba(110, 123, 255, 0.12);
+  --grad: linear-gradient(135deg, #7b86ff 0%, #5b67f5 100%);
   --ok: #16b36e;
   --warn: #f59e0b;
   --danger: #ef4462;
@@ -26,17 +26,17 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d0f16;
-    --surface: #161925;
-    --surface-2: #1b1f2d;
-    --sidebar: rgba(20, 23, 34, 0.8);
-    --border: #252a3a;
-    --border-strong: #31374a;
-    --text: #eef0f8;
-    --text-2: #a4a9c0;
-    --text-3: #6d7290;
-    --accent: #8079ff;
-    --accent-soft: rgba(128, 121, 255, 0.16);
+    --bg: #10121f;
+    --surface: #181b2c;
+    --surface-2: #1f2336;
+    --sidebar: rgba(21, 24, 40, 0.85);
+    --border: #2a2f47;
+    --border-strong: #363c58;
+    --text: #eef0fb;
+    --text-2: #a7acc8;
+    --text-3: #6f7596;
+    --accent: #7b86ff;
+    --accent-soft: rgba(110, 123, 255, 0.18);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
@@ -177,7 +177,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 }
 .stage::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(ellipse at 50% 120%, rgba(99, 91, 255, 0.08), transparent 60%);
+  background: radial-gradient(ellipse at 50% 120%, rgba(91, 103, 245, 0.08), transparent 60%);
 }
 .stage-inner { position: absolute; inset: 0; }
 
@@ -213,12 +213,12 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .screen-inner {
   height: 100%;
   border-radius: 10px;
-  background: linear-gradient(160deg, #eef0ff, #e3f6fb);
+  background: linear-gradient(160deg, #eef0ff, #e4e7ff);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   position: relative; overflow: hidden;
 }
 @media (prefers-color-scheme: dark) {
-  .screen-inner { background: linear-gradient(160deg, #20243a, #172a33); }
+  .screen-inner { background: linear-gradient(160deg, #262b48, #1b1f35); }
 }
 .tile.me .screen-inner { background: var(--grad); color: #fff; }
 .os-icon { width: 30px; height: 30px; opacity: 0.85; }
@@ -239,7 +239,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   border-radius: 999px;
   background: var(--accent); color: #fff;
   font-size: 11px; font-weight: 700;
-  box-shadow: 0 6px 16px rgba(99, 91, 255, 0.4);
+  box-shadow: 0 6px 16px rgba(91, 103, 245, 0.4);
   animation: pop 0.3s cubic-bezier(.2,1.4,.4,1);
 }
 .cursor-badge svg { width: 12px; height: 12px; fill: #fff; stroke: none; }
@@ -355,8 +355,8 @@ label.row:hover { background: var(--surface-2); }
 }
 .btn:hover { background: var(--surface-2); }
 .btn:active { transform: scale(0.97); }
-.btn.primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(99, 91, 255, 0.3); }
-.btn.primary:hover { box-shadow: 0 6px 18px rgba(99, 91, 255, 0.42); }
+.btn.primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(91, 103, 245, 0.3); }
+.btn.primary:hover { box-shadow: 0 6px 18px rgba(91, 103, 245, 0.42); }
 .btn.ghost { border-color: transparent; background: transparent; color: var(--text-2); }
 .btn.ghost:hover { background: var(--surface-2); color: var(--text); }
 .btn.danger { color: var(--danger); }
@@ -424,7 +424,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px;
   animation: rise 0.3s cubic-bezier(.2,1.2,.4,1);
 }
 @keyframes rise { from { transform: translateY(14px) scale(0.97); opacity: 0; } to { transform: none; opacity: 1; } }
-.modal-icon { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 16px; background: var(--grad); display: grid; place-items: center; color: #fff; box-shadow: 0 10px 24px rgba(99, 91, 255, 0.35); }
+.modal-icon { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 16px; background: var(--grad); display: grid; place-items: center; color: #fff; box-shadow: 0 10px 24px rgba(91, 103, 245, 0.35); }
 .modal-icon svg { width: 28px; height: 28px; }
 .modal-icon.ok { background: var(--ok); box-shadow: 0 10px 24px rgba(22, 179, 110, 0.35); }
 .modal h3 { margin: 0 0 8px; font-size: 19px; font-weight: 750; letter-spacing: -0.02em; }
