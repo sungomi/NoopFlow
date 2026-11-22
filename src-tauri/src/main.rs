@@ -77,6 +77,17 @@ fn request_permission(core: State<CoreHandle>) {
     core.send(Cmd::RequestPermission);
 }
 
+#[tauri::command]
+fn request_input_monitoring(core: State<CoreHandle>) {
+    core.send(Cmd::RequestInputMonitoring);
+}
+
+/// macOS applies newly granted privacy permissions only to a fresh process.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -153,7 +164,9 @@ fn main() {
             probe,
             open_receive_dir,
             reveal,
-            request_permission
+            request_permission,
+            request_input_monitoring,
+            restart_app
         ])
         .build(tauri::generate_context!())
         .expect("error while building NoopFlow");

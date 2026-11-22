@@ -49,7 +49,9 @@ pub struct Snapshot {
     pub controlled_by: Option<String>,
     pub locked: bool,
     pub settings: Settings,
+    /// Input capture is running (macOS: the event tap could be created).
     pub permission: bool,
+    pub perm: platform::PermStatus,
     pub receive_dir: String,
     pub pairing_with: Option<String>,
 }
@@ -82,6 +84,7 @@ pub enum Cmd {
     OpenReceiveDir,
     Reveal(String),
     RequestPermission,
+    RequestInputMonitoring,
 }
 
 #[derive(Clone)]
@@ -226,6 +229,7 @@ struct Engine {
     dialing: HashMap<String, Instant>,
     mode: Mode,
     permission: bool,
+    perm: platform::PermStatus,
     // target role
     controlled_by: Option<String>,
     vpos: (f64, f64),
@@ -300,6 +304,7 @@ impl Engine {
             dialing: HashMap::new(),
             mode: Mode::Local,
             permission: platform::permission_ok(),
+            perm: platform::permission_status(),
             controlled_by: None,
             vpos: (0.0, 0.0),
             frac: (0.0, 0.0),
@@ -416,6 +421,7 @@ impl Engine {
             locked: self.cfg.locked,
             settings: self.cfg.settings.clone(),
             permission: self.permission,
+            perm: self.perm,
             receive_dir: self.cfg.receive_dir().to_string_lossy().into_owned(),
             pairing_with: self.pairing_with.clone(),
         }
@@ -484,6 +490,12 @@ impl Engine {
         let before = self.seen.len();
         self.seen.retain(|_, s| s.at.elapsed() < Duration::from_secs(8));
         let mut changed = before != self.seen.len();
+
+        let perm = platform::permission_status();
+        if perm != self.perm {
+            self.perm = perm;
+            changed = true;
+        }
 
         if self.last_tick.elapsed() >= Duration::from_secs(5) {
             self.last_tick = Instant::now();
@@ -1112,6 +1124,7 @@ impl Engine {
             Cmd::OpenReceiveDir => files::open_dir(&self.cfg.receive_dir()),
             Cmd::Reveal(p) => files::reveal(std::path::Path::new(&p)),
             Cmd::RequestPermission => platform::request_permission(),
+            Cmd::RequestInputMonitoring => platform::request_input_monitoring(),
         }
     }
 }

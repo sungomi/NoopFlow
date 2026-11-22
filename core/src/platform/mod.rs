@@ -24,6 +24,17 @@ pub enum InputEvent {
     Permission(bool),
 }
 
+/// What the OS currently allows this app to do (macOS privacy settings).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct PermStatus {
+    /// Accessibility: needed to control the mouse/keyboard and to capture input.
+    pub accessibility: bool,
+    /// Input Monitoring: needed on some macOS versions to read the keyboard.
+    pub input_monitoring: bool,
+    /// Running from a real install location (not from the .dmg or a translocated copy).
+    pub installed: bool,
+}
+
 pub(crate) struct Shared {
     pub grabbing: AtomicBool,
     pub neighbors: AtomicU8,

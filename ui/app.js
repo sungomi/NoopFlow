@@ -225,12 +225,49 @@ function renderStatus() {
   $('#statusTitle').textContent = title;
   $('#statusSub').textContent = sub;
   $('#lockToggle').checked = S.locked;
-  $('#permBanner').classList.toggle('hidden', S.me.os !== 'mac' || S.permission);
+  renderPermBanner();
 
   const nearby = S.devices.filter((d) => !d.trusted).length;
   const badge = $('#nearbyBadge');
   badge.textContent = nearby;
   badge.classList.toggle('hidden', nearby === 0);
+}
+
+// Mac permissions: walk the user through the one step that is actually missing.
+function renderPermBanner() {
+  const banner = $('#permBanner');
+  const p = S.perm || { accessibility: true, input_monitoring: true, installed: true };
+  const needsHelp = S.me.os === 'mac' && (!S.permission || !p.accessibility || !p.installed);
+  banner.classList.toggle('hidden', !needsHelp);
+  if (!needsHelp) return;
+
+  let title;
+  let text;
+  let actions;
+  banner.classList.remove('ready');
+  if (!p.installed) {
+    title = '응용 프로그램 폴더로 옮겨 주세요';
+    text = 'dmg 창에서 바로 실행하면 macOS가 권한을 기억하지 못해요. NoopFlow를 Applications 폴더로 끌어다 놓고, 거기서 다시 열어 주세요.';
+    actions = [];
+  } else if (!p.accessibility) {
+    title = '손쉬운 사용 권한이 필요해요';
+    text = '시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용에서 NoopFlow를 켜 주세요. 이미 켜져 있다면 −로 지우고 다시 추가해 주세요.';
+    actions = [['permission', '권한 설정 열기', true]];
+  } else if (!p.input_monitoring) {
+    title = '입력 모니터링 권한도 켜 주세요';
+    text = '시스템 설정 → 개인정보 보호 및 보안 → 입력 모니터링에서 NoopFlow를 켠 뒤, 다시 시작을 눌러 주세요.';
+    actions = [['input', '설정 열기', false], ['restart', '다시 시작', true]];
+  } else {
+    banner.classList.add('ready');
+    title = '거의 다 됐어요! 다시 시작해 주세요';
+    text = '권한은 켜졌어요. macOS는 앱을 다시 열어야 새 권한을 적용해요.';
+    actions = [['restart', '다시 시작', true]];
+  }
+  $('#permTitle').textContent = title;
+  $('#permText').textContent = text;
+  $('#permActions').innerHTML = actions
+    .map(([act, label, primary]) => `<button class="btn ${primary ? 'primary' : ''}" data-perm="${act}">${label}</button>`)
+    .join('');
 }
 
 // --------------------------------------------------------------- devices
@@ -544,7 +581,12 @@ function renderAll() {
 function bind() {
   $$('.nav-item').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   $('#lockToggle').addEventListener('change', (e) => invoke('set_locked', { locked: e.target.checked }));
-  $('#permBtn').addEventListener('click', () => invoke('request_permission'));
+  $('#permActions').addEventListener('click', (e) => {
+    const act = e.target.closest('[data-perm]')?.dataset.perm;
+    if (act === 'permission') invoke('request_permission');
+    if (act === 'input') invoke('request_input_monitoring');
+    if (act === 'restart') invoke('restart_app');
+  });
   $('#openDirBtn').addEventListener('click', () => invoke('open_receive_dir'));
 
   $('#trustedList').addEventListener('click', (e) => {
@@ -632,7 +674,17 @@ function mockInvoke(cmd, args) {
       controlled_by: null,
       locked: false,
       settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', swap_ctrl_cmd: true, clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6 },
-      permission: true,
+      // ?perm=install|access|input|restart previews the Mac permission banner.
+      ...(() => {
+        const q = new URLSearchParams(location.search).get('perm');
+        const states = {
+          install: { installed: false, accessibility: false, input_monitoring: false },
+          access: { installed: true, accessibility: false, input_monitoring: false },
+          input: { installed: true, accessibility: true, input_monitoring: false },
+          restart: { installed: true, accessibility: true, input_monitoring: true },
+        };
+        return { permission: !q, perm: states[q] || states.restart };
+      })(),
       receive_dir: 'C:\\Users\\me\\Downloads\\NoopFlow',
       pairing_with: null,
     });

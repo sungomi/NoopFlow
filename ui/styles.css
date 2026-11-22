@@ -161,6 +161,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .banner-icon { width: 30px; height: 30px; border-radius: 50%; background: var(--warn); color: #fff; font-weight: 800; display: grid; place-items: center; flex-shrink: 0; }
 .banner-text { display: flex; flex-direction: column; gap: 2px; flex: 1; line-height: 1.45; }
 .banner-text span { color: var(--text-2); font-size: 13px; }
+.banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.banner.ready { background: linear-gradient(135deg, rgba(22, 179, 110, 0.14), rgba(22, 179, 110, 0.05)); border-color: rgba(22, 179, 110, 0.35); }
+.banner.ready .banner-icon { background: var(--ok); }
 
 /* ---------------------------------------------------------------- stage */
 .stage {

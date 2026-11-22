@@ -26,3 +26,7 @@ pub fn permission_ok() -> bool {
     true
 }
 pub fn request_permission() {}
+pub fn permission_status() -> super::PermStatus {
+    super::PermStatus { accessibility: true, input_monitoring: true, installed: true }
+}
+pub fn request_input_monitoring() {}

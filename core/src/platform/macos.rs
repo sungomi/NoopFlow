@@ -111,6 +111,14 @@ extern "C" {
     static kTISCategoryKeyboardInputSource: CFStringRef;
 }
 
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDCheckAccess(request_type: u32) -> u32;
+    fn IOHIDRequestAccess(request_type: u32) -> bool;
+}
+const IOHID_REQUEST_LISTEN: u32 = 1;
+const IOHID_ACCESS_GRANTED: u32 = 0;
+
 extern "C" {
     static _dispatch_main_q: u8;
     fn dispatch_async_f(queue: *const c_void, ctx: *mut c_void, work: extern "C" fn(*mut c_void));
@@ -356,7 +364,11 @@ const TAP_MASK: u64 = (1 << LEFT_DOWN)
 pub(crate) fn start_impl() -> anyhow::Result<()> {
     std::thread::Builder::new().name("noopflow-tap".into()).spawn(|| unsafe {
         loop {
-            let tap = CGEventTapCreate(HID_TAP, 0, 0, TAP_MASK, tap_cb, null_mut());
+            // HID-level first; fall back to the session tap (1), which some setups allow when HID doesn't.
+            let mut tap = CGEventTapCreate(HID_TAP, 0, 0, TAP_MASK, tap_cb, null_mut());
+            if tap.is_null() {
+                tap = CGEventTapCreate(1, 0, 0, TAP_MASK, tap_cb, null_mut());
+            }
             if tap.is_null() {
                 emit(InputEvent::Permission(false));
                 std::thread::sleep(Duration::from_secs(2));
@@ -696,6 +708,26 @@ pub fn clipboard_seq() -> u64 {
 
 pub fn permission_ok() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
+}
+
+pub fn permission_status() -> super::PermStatus {
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    super::PermStatus {
+        accessibility: unsafe { AXIsProcessTrusted() != 0 },
+        input_monitoring: unsafe { IOHIDCheckAccess(IOHID_REQUEST_LISTEN) == IOHID_ACCESS_GRANTED },
+        // Running from the mounted .dmg or a Gatekeeper-translocated copy: permissions
+        // granted there don't stick, so the app must be moved to /Applications first.
+        installed: !(exe.starts_with("/Volumes/") || exe.contains("/AppTranslocation/")),
+    }
+}
+
+pub fn request_input_monitoring() {
+    unsafe {
+        IOHIDRequestAccess(IOHID_REQUEST_LISTEN);
+    }
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+        .spawn();
 }
 
 pub fn request_permission() {
