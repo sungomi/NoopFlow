@@ -40,6 +40,18 @@ pub struct DeviceView {
     pub screen: Option<Rect>,
 }
 
+/// Live counters shown in Settings → 진단, to tell "nothing arrives" from "arrives but can't move".
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct Diag {
+    /// Times another computer handed the cursor to this one.
+    pub enters: u64,
+    /// Cursor moves received from another computer.
+    pub moves_in: u64,
+    /// Cursor moves sent while controlling another computer.
+    pub moves_out: u64,
+    pub last_controller: Option<String>,
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct Snapshot {
     pub me: DeviceView,
@@ -52,6 +64,7 @@ pub struct Snapshot {
     /// Input capture is running (macOS: the event tap could be created).
     pub permission: bool,
     pub perm: platform::PermStatus,
+    pub diag: Diag,
     pub receive_dir: String,
     pub pairing_with: Option<String>,
 }
@@ -230,6 +243,8 @@ struct Engine {
     mode: Mode,
     permission: bool,
     perm: platform::PermStatus,
+    diag: Diag,
+    warned_no_access: bool,
     // target role
     controlled_by: Option<String>,
     vpos: (f64, f64),
@@ -305,6 +320,8 @@ impl Engine {
             mode: Mode::Local,
             permission: platform::permission_ok(),
             perm: platform::permission_status(),
+            diag: Diag::default(),
+            warned_no_access: false,
             controlled_by: None,
             vpos: (0.0, 0.0),
             frac: (0.0, 0.0),
@@ -422,6 +439,7 @@ impl Engine {
             settings: self.cfg.settings.clone(),
             permission: self.permission,
             perm: self.perm,
+            diag: self.diag.clone(),
             receive_dir: self.cfg.receive_dir().to_string_lossy().into_owned(),
             pairing_with: self.pairing_with.clone(),
         }
@@ -673,6 +691,14 @@ impl Engine {
                 self.frac = (0.0, 0.0);
                 self.ralt.reset();
                 platform::inject_move(self.vpos.0, self.vpos.1, 0, 0);
+                self.diag.enters += 1;
+                self.diag.last_controller = Some(self.peer_name(from));
+                // The OS silently drops injected input without Accessibility; say so instead.
+                self.perm = platform::permission_status();
+                if !self.perm.accessibility && !self.warned_no_access {
+                    self.warned_no_access = true;
+                    self.toast("error", "손쉬운 사용 권한이 없어서 이 맥의 마우스를 움직일 수 없어요. 설정 → 진단을 확인해 주세요.");
+                }
                 self.refresh_neighbors();
                 self.emit_state();
             }
@@ -684,7 +710,10 @@ impl Engine {
                     self.emit_state();
                 }
             }
-            Msg::MouseMove { dx, dy } if self.controlled_by.as_deref() == Some(from) => self.target_move(from, dx, dy),
+            Msg::MouseMove { dx, dy } if self.controlled_by.as_deref() == Some(from) => {
+                self.diag.moves_in += 1;
+                self.target_move(from, dx, dy);
+            }
             Msg::MouseButton { button, down } if self.controlled_by.as_deref() == Some(from) => {
                 for a in self.ralt.other_input() {
                     self.target_act(a);
@@ -884,7 +913,12 @@ impl Engine {
                     _ => platform::ungrab(None),
                 }
             }
-            InputEvent::MouseMove { dx, dy } => self.forward(Msg::MouseMove { dx, dy }),
+            InputEvent::MouseMove { dx, dy } => {
+                if self.target().is_some() {
+                    self.diag.moves_out += 1;
+                }
+                self.forward(Msg::MouseMove { dx, dy });
+            }
             InputEvent::Button { button, down } => {
                 for a in self.rcmd.other_input() {
                     self.controller_act(a);

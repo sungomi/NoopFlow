@@ -322,8 +322,33 @@ function renderSettings() {
       $('#speedValue').textContent = `${Number(v).toFixed(1)}×`;
     }
   }
+  renderDiag();
   if (document.activeElement !== $('#nameInput')) $('#nameInput').value = S.me.name;
   $('#receiveDir').textContent = S.receive_dir;
+}
+
+function diagItems() {
+  const p = S.perm || {};
+  const d = S.diag || {};
+  const yes = (v) => [v ? '켜짐' : '꺼짐', v ? 'good' : 'bad'];
+  const items = [];
+  if (S.me.os === 'mac') {
+    items.push(['손쉬운 사용', ...yes(p.accessibility)]);
+    items.push(['입력 모니터링', ...yes(p.input_monitoring)]);
+    items.push(['설치 위치', p.installed ? '응용 프로그램' : 'dmg / 임시 위치', p.installed ? 'good' : 'bad']);
+  }
+  items.push(['입력 가로채기', S.permission ? '동작 중' : '멈춤', S.permission ? 'good' : 'bad']);
+  items.push(['연결된 기기', `${S.devices.filter((x) => x.trusted && x.online).length}대`, '']);
+  items.push(['받은 커서 진입', `${d.enters || 0}회${d.last_controller ? ` · ${d.last_controller}` : ''}`, '']);
+  items.push(['받은 커서 이동', `${d.moves_in || 0}회`, '']);
+  items.push(['보낸 커서 이동', `${d.moves_out || 0}회`, '']);
+  return items;
+}
+
+function renderDiag() {
+  $('#diagGrid').innerHTML = diagItems()
+    .map(([label, value, cls]) => `<div class="diag-item"><span class="diag-label">${esc(label)}</span><span class="diag-value ${cls}">${esc(value)}</span></div>`)
+    .join('');
 }
 
 function saveSetting(key, value) {
@@ -626,6 +651,27 @@ function bind() {
   const saveName = () => { if (name.value.trim() && name.value.trim() !== S.me.name) invoke('set_name', { name: name.value.trim() }); };
   name.addEventListener('change', saveName);
   name.addEventListener('keydown', (e) => { if (e.key === 'Enter') name.blur(); });
+
+  $('#diagCopy').addEventListener('click', async () => {
+    const text = [`NoopFlow ${$('.version').textContent.replace('NoopFlow ', '')} · ${OS_NAME[S.me.os]} · ${S.me.name}`]
+      .concat(diagItems().map(([l, v]) => `${l}: ${v}`))
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('진단 내용을 복사했어요', 'ok');
+    } catch {
+      toast('복사하지 못했어요', 'error');
+    }
+  });
+  // Counters change constantly, so refresh them while the settings tab is open.
+  setInterval(async () => {
+    if (MOCK || !$('#tab-settings').classList.contains('active')) return;
+    try {
+      S = await invoke('get_state');
+      renderDiag();
+      renderPermBanner();
+    } catch {}
+  }, 1000);
 
   window.addEventListener('resize', () => renderStage());
   document.addEventListener('keydown', (e) => {
