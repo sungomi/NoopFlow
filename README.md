@@ -1,7 +1,22 @@
-# NoopFlow
+<p align="center">
+  <img src="docs/icon.png" width="128" alt="NoopFlow icon" />
+</p>
 
-키보드·마우스 하나로 Windows와 Mac(또는 Windows끼리)을 함께 쓰는 앱이에요.
-커서를 화면 가장자리 너머로 밀면 옆 컴퓨터로 넘어가요.
+<h1 align="center">NoopFlow</h1>
+
+<p align="center">
+  키보드·마우스 하나로 Windows와 Mac(또는 Windows끼리)을 함께 쓰는 앱이에요.<br />
+  커서를 화면 가장자리 너머로 밀면 옆 컴퓨터로 넘어가요.
+</p>
+
+<p align="center">
+  <a href="../../releases/latest"><b>다운로드</b></a> ·
+  <a href="https://github.com/sungomi/NooP">NooP</a> 패밀리
+</p>
+
+<p align="center">
+  <img src="docs/layout-dark.png" width="760" alt="화면 배치" />
+</p>
 
 > **상태: v0.1 (초기 버전)**. Windows에서는 빌드하고 실행까지 확인했어요. Mac 버전은 아직 실제 Mac에서 돌려보지 않았어요.
 
@@ -18,6 +33,16 @@
 git tag v0.1.1
 git push origin v0.1.1
 ```
+
+## 스크린샷
+
+| 기기 연결 | 6자리 코드 페어링 |
+| :---: | :---: |
+| <img src="docs/devices.png" width="400" /> | <img src="docs/pairing.png" width="400" /> |
+| **한/영 전환 설정 (Mac)** | **라이트 모드** |
+| <img src="docs/settings-mac.png" width="400" /> | <img src="docs/layout-light.png" width="400" /> |
+
+> 스크린샷은 샘플 데이터로 찍은 화면이에요. `scripts/screenshots.ps1`로 다시 찍을 수 있어요.
 
 ## 기능
 

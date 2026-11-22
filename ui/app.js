@@ -608,13 +608,21 @@ async function init() {
     }
   }
   renderAll();
+  if (MOCK) applyPreviewHash();
 }
 
 // ----------------------------------------------- browser preview (no Tauri)
+// #devices / #settings open a tab, #pair shows the pairing code dialog,
+// ?os=mac previews the Mac-only settings. Used for README screenshots.
+function applyPreviewHash() {
+  const h = location.hash.slice(1);
+  if (h === 'devices' || h === 'settings') showTab(h);
+  if (h === 'pair') showPairCode({ id: 'mac', name: 'MacBook Pro', code: '482915' });
+}
 function mockInvoke(cmd, args) {
   if (cmd === 'get_state') {
     return Promise.resolve({
-      me: { id: 'me', name: 'JH-DESKTOP', os: 'windows', trusted: true, online: true, nearby: true, addr: null, screen: { x: 0, y: 0, w: 2560, h: 1440 } },
+      me: { id: 'me', name: 'JH-DESKTOP', os: new URLSearchParams(location.search).get('os') || 'windows', trusted: true, online: true, nearby: true, addr: null, screen: { x: 0, y: 0, w: 2560, h: 1440 } },
       devices: [
         { id: 'mac', name: 'MacBook Pro', os: 'mac', trusted: true, online: true, nearby: true, addr: '192.168.0.24', screen: { x: 0, y: 0, w: 1728, h: 1117 } },
         { id: 'lap', name: '거실 노트북', os: 'windows', trusted: false, online: false, nearby: true, addr: '192.168.0.31', screen: null },
