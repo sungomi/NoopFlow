@@ -7,10 +7,17 @@
 
 ## 다운로드
 
-[Actions](../../actions/workflows/build.yml) 탭에서 가장 최근의 성공한 빌드를 열고, 아래 **Artifacts**에서 받으면 돼요.
+[Releases](../../releases) 페이지에서 받으면 돼요.
 
-- `noopflow-windows-latest`: Windows 설치 파일 (`.msi`, `.exe`)
-- `noopflow-macos-latest`: Mac 유니버설 `.dmg` (Apple Silicon, Intel 모두 지원)
+- Windows: `NoopFlow_x.y.z_x64-setup.exe` (또는 `.msi`)
+- Mac: `NoopFlow_x.y.z_universal.dmg` (Apple Silicon, Intel 모두 지원)
+
+새 버전을 내려면 버전 태그를 push하면 돼요. 그러면 GitHub Actions가 빌드해서 Releases에 자동으로 올려줘요. 평소 push에는 빌드가 돌지 않아요.
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
 
 ## 기능
 
@@ -72,7 +79,7 @@ cd src-tauri; cargo tauri build
 bash scripts/build-mac.sh
 ```
 
-GitHub에 올리면 `.github/workflows/build.yml`이 Windows 설치 파일과 Mac 유니버설 `.dmg`를 자동으로 만들어요.
+`v`로 시작하는 태그를 push하거나 Actions 탭에서 직접 실행하면, `.github/workflows/build.yml`이 Windows 설치 파일과 Mac 유니버설 `.dmg`를 만들어요.
 
 UI만 브라우저로 미리 보려면 `scripts/serve-ui.ps1`을 실행하고 http://localhost:5178 을 열어요. 이때는 샘플 데이터로 보여요.
 
