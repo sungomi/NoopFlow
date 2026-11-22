@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// v2: MouseMove carries DPI-independent logical points as f32.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -169,7 +170,8 @@ pub enum Msg {
     /// Cursor enters the receiver's screen on `side` at fraction `t`.
     Enter { side: Side, t: f32 },
     Leave,
-    MouseMove { dx: i32, dy: i32 },
+    /// Relative move in logical points (Windows pixels divided by the display scale).
+    MouseMove { dx: f32, dy: f32 },
     MouseButton { button: Button, down: bool },
     /// Wheel units: 120 = one notch (Windows WHEEL_DELTA).
     Wheel { dx: i32, dy: i32 },

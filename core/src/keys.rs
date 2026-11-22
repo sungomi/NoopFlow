@@ -30,6 +30,31 @@ pub fn is_modifier(code: Hid) -> bool {
     (0xE0..=0xE7).contains(&code)
 }
 
+/// Map modifiers between a Windows and a Mac keyboard.
+///
+/// * `"position"` (default): keys in the same physical spot do the same job.
+///   Alt (next to the space bar) acts as ⌘, the Windows key as ⌥, Ctrl stays Ctrl,
+///   and the other way round for a Mac keyboard driving Windows.
+/// * `"ctrl_cmd"`: Ctrl and ⌘/Win trade places (Ctrl+C on Windows = ⌘C on Mac).
+/// * anything else: no remapping.
+pub fn map_cross_os(code: Hid, layout: &str) -> Hid {
+    match layout {
+        "position" => swap_alt_gui(code),
+        "ctrl_cmd" => swap_ctrl_gui(code),
+        _ => code,
+    }
+}
+
+pub fn swap_alt_gui(code: Hid) -> Hid {
+    match code {
+        hid::LALT => hid::LGUI,
+        hid::LGUI => hid::LALT,
+        hid::RALT => hid::RGUI,
+        hid::RGUI => hid::RALT,
+        other => other,
+    }
+}
+
 /// Swap Ctrl <-> Cmd/Win so a Windows keyboard feels native on a Mac and vice versa.
 pub fn swap_ctrl_gui(code: Hid) -> Hid {
     match code {
@@ -210,6 +235,19 @@ mod tests {
         for (k, h) in MAC_TABLE {
             assert_eq!(to_mac(*h), Some(*k), "hid {h:#x}");
         }
+    }
+
+    #[test]
+    fn position_layout() {
+        // Windows keyboard on a Mac: Alt -> ⌘, Win -> ⌥, Ctrl unchanged.
+        assert_eq!(map_cross_os(hid::LALT, "position"), hid::LGUI);
+        assert_eq!(map_cross_os(hid::LGUI, "position"), hid::LALT);
+        assert_eq!(map_cross_os(hid::LCTRL, "position"), hid::LCTRL);
+        // Mac keyboard on Windows: ⌘ -> Alt, ⌥ -> Win.
+        assert_eq!(map_cross_os(hid::RGUI, "position"), hid::RALT);
+        assert_eq!(map_cross_os(hid::C, "position"), hid::C);
+        assert_eq!(map_cross_os(hid::LCTRL, "ctrl_cmd"), hid::LGUI);
+        assert_eq!(map_cross_os(hid::LALT, "none"), hid::LALT);
     }
 
     #[test]

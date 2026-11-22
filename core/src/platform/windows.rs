@@ -6,7 +6,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{BOOL, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, MonitorFromPoint, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST};
+use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
@@ -270,6 +271,19 @@ pub fn permission_ok() -> bool {
 }
 
 pub fn request_permission() {}
+
+/// Display scale (1.0 = 100%) of the monitor at a point, for pixel <-> logical conversion.
+pub fn scale_at(x: f64, y: f64) -> f64 {
+    unsafe {
+        let m = MonitorFromPoint(POINT { x: x as i32, y: y as i32 }, MONITOR_DEFAULTTONEAREST);
+        let (mut dx, mut dy) = (96u32, 96u32);
+        if GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) == 0 && dx > 0 {
+            dx as f64 / 96.0
+        } else {
+            1.0
+        }
+    }
+}
 
 pub fn permission_status() -> super::PermStatus {
     super::PermStatus { accessibility: true, input_monitoring: true, installed: true }

@@ -102,6 +102,8 @@ pub enum NetEvent {
     DialFailed { id: Option<String>, pairing: bool, reason: String },
     Discovered { ann: Announce, addr: IpAddr },
     PairRequested { ann: Announce, addr: IpAddr },
+    /// The peer runs a NoopFlow with a different protocol version.
+    Incompatible { name: String, newer: bool },
 }
 
 fn psk_from_code(code: &str) -> [u8; 32] {
@@ -226,7 +228,13 @@ async fn run_connection(ctx: Arc<NetCtx>, mut stream: TcpStream, initiator: bool
         .send(&mut wr, &Msg::Hello { id: me.id.clone(), name: me.name.clone(), os: me.os, screen: me.screen, version: PROTOCOL_VERSION })
         .await?;
     let hello = match tokio::time::timeout(Duration::from_secs(10), crypto.recv(&mut rd)).await.map_err(|_| anyhow!("hello timeout"))?? {
-        Msg::Hello { id, name, os, screen, .. } => HelloInfo { id, name, os, screen },
+        Msg::Hello { id, name, os, screen, version } => {
+            if version != PROTOCOL_VERSION {
+                ctx.events.send(NetEvent::Incompatible { name: name.clone(), newer: version > PROTOCOL_VERSION }).ok();
+                bail!("protocol version {version} != {PROTOCOL_VERSION}");
+            }
+            HelloInfo { id, name, os, screen }
+        }
         _ => bail!("expected hello"),
     };
     if let Some(k) = &known_id {

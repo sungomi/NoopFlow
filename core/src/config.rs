@@ -15,8 +15,9 @@ pub struct Settings {
     pub right_alt_hangul: bool,
     /// How the Mac switches input source: "direct" (TIS API) or "ctrl_space" (sends ⌃Space).
     pub hangul_method: String,
-    /// Swap Ctrl and ⌘/Win when the keyboard comes from the other OS.
-    pub swap_ctrl_cmd: bool,
+    /// Modifier layout when the keyboard comes from the other OS:
+    /// "position" (Alt↔⌘, Win↔⌥), "ctrl_cmd" (Ctrl↔⌘) or "none".
+    pub key_layout: String,
     pub clipboard_sync: bool,
     /// Ctrl/⌘+V on another computer sends files you copied here.
     pub paste_files: bool,
@@ -25,6 +26,8 @@ pub struct Settings {
     pub receive_dir: Option<String>,
     /// Ignore screen edges this close (px) to a corner.
     pub corner_guard: i32,
+    /// Windows: what the window's close button does: "ask", "tray" or "quit".
+    pub close_action: String,
 }
 
 impl Default for Settings {
@@ -34,13 +37,14 @@ impl Default for Settings {
             lang1_hangul: true,
             right_alt_hangul: false,
             hangul_method: "direct".into(),
-            swap_ctrl_cmd: true,
+            key_layout: "position".into(),
             clipboard_sync: true,
             paste_files: true,
             invert_scroll: false,
             mouse_speed: 1.0,
             receive_dir: None,
             corner_guard: 6,
+            close_action: "ask".into(),
         }
     }
 }

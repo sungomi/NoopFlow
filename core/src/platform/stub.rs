@@ -26,6 +26,9 @@ pub fn permission_ok() -> bool {
     true
 }
 pub fn request_permission() {}
+pub fn scale_at(_x: f64, _y: f64) -> f64 {
+    1.0
+}
 pub fn permission_status() -> super::PermStatus {
     super::PermStatus { accessibility: true, input_monitoring: true, installed: true }
 }

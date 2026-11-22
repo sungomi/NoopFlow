@@ -710,6 +710,11 @@ pub fn permission_ok() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
 }
 
+/// macOS coordinates are already logical points.
+pub fn scale_at(_x: f64, _y: f64) -> f64 {
+    1.0
+}
+
 pub fn permission_status() -> super::PermStatus {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     super::PermStatus {

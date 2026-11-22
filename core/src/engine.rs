@@ -25,6 +25,8 @@ use crate::platform::{self, InputEvent};
 use crate::protocol::{Button, Cell, ClipData, Layout, Msg, Os, Rect, Side};
 
 const TAP_WINDOW: Duration = Duration::from_millis(600);
+/// ~250 Hz: smooth on any display while cutting the message rate of 1000 Hz mice.
+const MOVE_INTERVAL: Duration = Duration::from_millis(4);
 
 // ----------------------------------------------------------------- public API
 
@@ -253,6 +255,15 @@ struct Engine {
     held_keys: Vec<u16>,
     held_buttons: u8,
     ralt: HoldTap,
+    /// Logical points -> this screen's units at the virtual cursor.
+    target_scale: f64,
+    /// Modifier layout for the current controller ("position", "ctrl_cmd", "none").
+    key_map: String,
+    // controller-side mouse smoothing
+    ctrl_scale: f64,
+    pending_move: (f32, f32),
+    last_move_sent: Instant,
+    last_incompat: Option<(String, Instant)>,
     // controller role
     fwd_down: Vec<u16>,
     rcmd: HoldTap,
@@ -329,6 +340,12 @@ impl Engine {
             held_keys: vec![],
             held_buttons: 0,
             ralt: HoldTap::new(hid::RALT),
+            target_scale: 1.0,
+            key_map: "none".into(),
+            ctrl_scale: 1.0,
+            pending_move: (0.0, 0.0),
+            last_move_sent: Instant::now(),
+            last_incompat: None,
             fwd_down: vec![],
             rcmd: HoldTap::new(hid::RGUI),
             local_rcmd: None,
@@ -349,9 +366,14 @@ impl Engine {
         self.refresh_neighbors();
         self.emit_state();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
+        // Mouse moves are batched into at most one message per MOVE_INTERVAL.
+        let mut move_tick = tokio::time::interval(MOVE_INTERVAL);
+        move_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
+                biased;
                 Some(i) = ch.input_rx.recv() => self.on_input(i),
+                _ = move_tick.tick(), if self.pending_move != (0.0, 0.0) => self.flush_move(),
                 Some(e) = ch.net_rx.recv() => self.on_net(e),
                 Some(c) = cmd_rx.recv() => self.on_cmd(c).await,
                 Some(c) = ch.clip_rx.recv() => self.on_clip(c),
@@ -559,6 +581,17 @@ impl Engine {
                     self.emit_state();
                 }
             }
+            NetEvent::Incompatible { name, newer } => {
+                let text = if newer {
+                    format!("{name}의 NoopFlow가 더 새 버전이에요. 이 컴퓨터의 NoopFlow를 업데이트해 주세요.")
+                } else {
+                    format!("{name}의 NoopFlow가 예전 버전이에요. 그 컴퓨터의 NoopFlow를 업데이트해 주세요.")
+                };
+                if self.last_incompat.as_ref().map_or(true, |(n, at)| *n != name || at.elapsed() > Duration::from_secs(60)) {
+                    self.last_incompat = Some((name, Instant::now()));
+                    self.toast("error", text);
+                }
+            }
             NetEvent::PairRequested { ann, .. } => {
                 let code = self.net.new_pair_code();
                 self.emit(CoreEvent::PairCode { id: ann.id, name: ann.name, code });
@@ -688,6 +721,7 @@ impl Engine {
                 self.monitors = platform::screens();
                 let b = Rect::union(&self.monitors);
                 self.vpos = b.point_on_side(side, t, 1.0);
+                self.target_scale = platform::scale_at(self.vpos.0, self.vpos.1);
                 self.frac = (0.0, 0.0);
                 self.ralt.reset();
                 platform::inject_move(self.vpos.0, self.vpos.1, 0, 0);
@@ -756,8 +790,9 @@ impl Engine {
 
     // ------------------------------------------------------- target role
 
-    fn target_move(&mut self, from: &str, dx: i32, dy: i32) {
-        let speed = self.cfg.settings.mouse_speed.clamp(0.2, 4.0) as f64;
+    /// `dx`/`dy` are logical points (DPI-independent); convert to this screen's units.
+    fn target_move(&mut self, from: &str, dx: f32, dy: f32) {
+        let speed = self.cfg.settings.mouse_speed.clamp(0.2, 4.0) as f64 * self.target_scale;
         self.frac.0 += dx as f64 * speed;
         self.frac.1 += dy as f64 * speed;
         let (mx, my) = (self.frac.0.trunc(), self.frac.1.trunc());
@@ -798,16 +833,22 @@ impl Engine {
                 y = y.clamp(m.y as f64, (m.bottom() - 1) as f64);
             }
         }
+        // Moving onto another monitor of this computer may change its scale.
+        let moved_monitor = self.monitors.iter().position(|m| m.contains(x, y)) != self.monitors.iter().position(|m| m.contains(self.vpos.0, self.vpos.1));
         self.vpos = (x, y);
+        if moved_monitor {
+            self.target_scale = platform::scale_at(x, y);
+        }
         platform::inject_move(x, y, mx as i32, my as i32);
     }
 
     fn target_key(&mut self, from: &str, code: u16, down: bool) {
         let ctrl_os = self.peers.get(from).map(|p| p.hello.os).unwrap_or(self.os);
-        let mut code = code;
-        if self.cfg.settings.swap_ctrl_cmd && ctrl_os != self.os && (ctrl_os == Os::Mac || self.os == Os::Mac) {
-            code = keys::swap_ctrl_gui(code);
-        }
+        self.key_map = if ctrl_os != self.os && (ctrl_os == Os::Mac || self.os == Os::Mac) {
+            self.cfg.settings.key_layout.clone()
+        } else {
+            "none".into()
+        };
         if self.os == Os::Mac {
             if code == hid::LANG1 && self.cfg.settings.lang1_hangul {
                 if down {
@@ -815,6 +856,7 @@ impl Engine {
                 }
                 return;
             }
+            // Tap detection works on the physical key (right Alt), before remapping.
             if self.cfg.settings.right_alt_hangul {
                 for a in self.ralt.key(code, down) {
                     self.target_act(a);
@@ -822,12 +864,15 @@ impl Engine {
                 return;
             }
         }
-        self.inject_tracked(code, down);
+        self.inject_tracked(keys::map_cross_os(code, &self.key_map), down);
     }
 
     fn target_act(&mut self, a: Act) {
         match a {
-            Act::Pass(c, d) => self.inject_tracked(c, d),
+            Act::Pass(c, d) => {
+                let c = keys::map_cross_os(c, &self.key_map);
+                self.inject_tracked(c, d);
+            }
             Act::Tap => platform::toggle_input_source(&self.cfg.settings.hangul_method),
         }
     }
@@ -865,15 +910,34 @@ impl Engine {
         }
     }
 
-    fn forward(&self, msg: Msg) {
+    /// Send to the current target. Anything other than a move first flushes the
+    /// batched move, so clicks and keys land where the cursor actually is.
+    fn forward(&mut self, msg: Msg) {
+        if !matches!(msg, Msg::MouseMove { .. }) {
+            self.flush_move();
+        }
         if let Some(p) = self.target() {
             p.send(msg);
+        }
+    }
+
+    fn flush_move(&mut self) {
+        let (dx, dy) = std::mem::take(&mut self.pending_move);
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        self.last_move_sent = Instant::now();
+        if let Some(p) = self.target() {
+            p.send(Msg::MouseMove { dx, dy });
         }
     }
 
     fn start_controlling(&mut self, id: String, side: Side, t: f32) {
         self.fwd_down.clear();
         self.rcmd.reset();
+        self.pending_move = (0.0, 0.0);
+        let (cx, cy) = platform::cursor_pos();
+        self.ctrl_scale = platform::scale_at(cx, cy).max(0.5);
         if let Some(p) = self.peers.get(&id) {
             p.send(Msg::Enter { side, t });
         }
@@ -914,10 +978,17 @@ impl Engine {
                 }
             }
             InputEvent::MouseMove { dx, dy } => {
-                if self.target().is_some() {
-                    self.diag.moves_out += 1;
+                if self.target().is_none() {
+                    return;
                 }
-                self.forward(Msg::MouseMove { dx, dy });
+                self.diag.moves_out += 1;
+                let s = self.ctrl_scale as f32;
+                self.pending_move.0 += dx as f32 / s;
+                self.pending_move.1 += dy as f32 / s;
+                // First move after a pause goes out at once; bursts are batched by the move tick.
+                if self.last_move_sent.elapsed() >= MOVE_INTERVAL {
+                    self.flush_move();
+                }
             }
             InputEvent::Button { button, down } => {
                 for a in self.rcmd.other_input() {

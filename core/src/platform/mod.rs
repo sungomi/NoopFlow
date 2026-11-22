@@ -12,6 +12,7 @@ use crate::protocol::{Button, Rect, Side};
 pub enum InputEvent {
     /// The local cursor was pushed against `side`; local input is now grabbed.
     EdgeExit { side: Side, t: f32 },
+    /// Raw device units: pixels on Windows, points on macOS.
     MouseMove { dx: i32, dy: i32 },
     Button { button: Button, down: bool },
     /// 120 units = one wheel notch.

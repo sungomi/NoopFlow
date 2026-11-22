@@ -324,6 +324,15 @@ function renderSettings() {
   }
   renderDiag();
   if (document.activeElement !== $('#nameInput')) $('#nameInput').value = S.me.name;
+  $$('.win-only-row').forEach((el) => el.classList.toggle('hidden', isMac));
+  $('#autostartTitle').textContent = isMac ? '로그인 시 자동 실행' : 'Windows 시작 시 자동 실행';
+  $('#keyLayoutHint').textContent = {
+    position: isMac
+      ? '윈도우 키보드: Alt → ⌘, Windows 키 → ⌥, Ctrl → Ctrl. 키 위치가 맥 키보드와 같아져요.'
+      : '맥 키보드: ⌘ → Alt, ⌥ → Windows 키, Ctrl → Ctrl. 키 위치가 윈도우 키보드와 같아져요.',
+    ctrl_cmd: 'Ctrl과 ⌘(Windows 키)를 맞바꿔요. 윈도우 Ctrl+C가 맥에서 ⌘C가 돼요.',
+    none: '키를 바꾸지 않고 그대로 보내요.',
+  }[S.settings.key_layout] || '';
   $('#receiveDir').textContent = S.receive_dir;
 }
 
@@ -606,6 +615,14 @@ function renderAll() {
 function bind() {
   $$('.nav-item').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   $('#lockToggle').addEventListener('change', (e) => invoke('set_locked', { locked: e.target.checked }));
+  $('#autostartToggle').addEventListener('change', async (e) => {
+    try {
+      e.target.checked = await invoke('set_autostart', { enabled: e.target.checked });
+    } catch {
+      toast('자동 실행 설정을 바꾸지 못했어요', 'error');
+      e.target.checked = !e.target.checked;
+    }
+  });
   $('#permActions').addEventListener('click', (e) => {
     const act = e.target.closest('[data-perm]')?.dataset.perm;
     if (act === 'permission') invoke('request_permission');
@@ -682,10 +699,40 @@ function bind() {
   });
 }
 
+// --------------------------------------------------- window close (Windows)
+function onCloseRequested() {
+  const action = S?.settings?.close_action || 'ask';
+  if (action === 'tray') return invoke('hide_window');
+  if (action === 'quit') return invoke('quit_app');
+  openModal(`
+    <div class="modal-icon">${ICON.cursor}</div>
+    <h3>NoopFlow를 어떻게 할까요?</h3>
+    <p>트레이로 최소화하면 키보드·마우스 공유가 계속 동작해요.<br>종료하면 다른 컴퓨터와 연결이 끊겨요.</p>
+    <label class="remember"><input type="checkbox" id="closeRemember" /> 다음부터 묻지 않기</label>
+    <div class="actions">
+      <button class="btn ghost" data-close="cancel">취소</button>
+      <button class="btn danger" data-close="quit">종료</button>
+      <button class="btn primary" data-close="tray">최소화</button>
+    </div>`, { kind: 'close' });
+}
+
+$('#modal').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-close]')?.dataset.close;
+  if (!act) return;
+  if (act !== 'cancel' && $('#closeRemember')?.checked) saveSetting('close_action', act);
+  closeModal();
+  if (act === 'tray') invoke('hide_window');
+  if (act === 'quit') invoke('quit_app');
+});
+
 async function init() {
   bind();
   if (!MOCK) {
     await T.event.listen('core', (e) => onCore(e.payload));
+    await T.event.listen('close-requested', onCloseRequested);
+    await T.event.listen('open-tab', (e) => showTab(e.payload));
+    await T.event.listen('autostart', (e) => { $('#autostartToggle').checked = !!e.payload; });
+    invoke('get_autostart').then((on) => { $('#autostartToggle').checked = !!on; });
     setupFileDrop();
   }
   for (let i = 0; i < 20 && !S; i++) {
@@ -706,6 +753,7 @@ function applyPreviewHash() {
   const h = location.hash.slice(1);
   if (h === 'devices' || h === 'settings') showTab(h);
   if (h === 'pair') showPairCode({ id: 'mac', name: 'MacBook Pro', code: '482915' });
+  if (h === 'close') onCloseRequested();
 }
 function mockInvoke(cmd, args) {
   if (cmd === 'get_state') {
@@ -719,7 +767,7 @@ function mockInvoke(cmd, args) {
       active: 'mac',
       controlled_by: null,
       locked: false,
-      settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', swap_ctrl_cmd: true, clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6 },
+      settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', key_layout: 'position', clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6, close_action: 'ask' },
       // ?perm=install|access|input|restart previews the Mac permission banner.
       ...(() => {
         const q = new URLSearchParams(location.search).get('perm');
