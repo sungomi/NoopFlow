@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NoopFlow</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="logo.png" alt="" class="brand-logo" />
+        <span class="brand-name">NoopFlow</span>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-tab="layout">
+          <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="8.5" height="6.5" rx="1.6"/><rect x="13" y="5" width="8.5" height="6.5" rx="1.6"/><path d="M5 15.5h3.5M15.5 15.5H19"/></svg>
+          화면 배치
+        </button>
+        <button class="nav-item" data-tab="devices">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></svg>
+          기기
+          <span class="nav-badge hidden" id="nearbyBadge"></span>
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+          설정
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="status-card" id="statusCard">
+          <span class="status-dot"></span>
+          <div class="status-texts">
+            <span class="status-title" id="statusTitle">준비 중…</span>
+            <span class="status-sub" id="statusSub"></span>
+          </div>
+        </div>
+        <label class="lock-row">
+          <span>
+            <span class="lock-title">화면 이동 잠금</span>
+            <span class="lock-sub">이 화면에만 머물러요</span>
+          </span>
+          <span class="switch"><input type="checkbox" id="lockToggle" /><span class="track"></span></span>
+        </label>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="banner hidden" id="permBanner">
+        <div class="banner-icon">!</div>
+        <div class="banner-text">
+          <strong>손쉬운 사용 권한이 필요해요</strong>
+          <span>시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용에서 NoopFlow를 켜 주세요. 켜면 자동으로 이어서 동작해요.</span>
+        </div>
+        <button class="btn primary" id="permBtn">권한 설정 열기</button>
+      </div>
+
+      <section class="tab active" id="tab-layout">
+        <header class="page-head">
+          <div>
+            <h1>화면 배치</h1>
+            <p>실제 책상 위 모습대로 화면을 끌어다 놓으세요. 커서를 가장자리 너머로 밀면 옆 컴퓨터로 넘어가요.</p>
+          </div>
+        </header>
+        <div class="stage" id="stage">
+          <div class="stage-inner" id="stageInner"></div>
+        </div>
+        <div class="hints">
+          <div class="hint"><span class="kbd-group"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd><kbd>H</kbd></span>내 화면으로 돌아오기</div>
+          <div class="hint"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg>기기 위에 파일을 끌어다 놓으면 전송</div>
+          <div class="hint"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h2M11 10h2M15 10h2M8 14h8"/></svg>복사한 파일은 옆 컴퓨터에서 붙여넣기로 전송</div>
+        </div>
+      </section>
+
+      <section class="tab" id="tab-devices">
+        <header class="page-head">
+          <div>
+            <h1>기기</h1>
+            <p>같은 와이파이(네트워크)에 있는 NoopFlow 기기를 자동으로 찾아요. 처음 한 번만 6자리 코드로 연결하면 돼요.</p>
+          </div>
+        </header>
+        <div class="card">
+          <div class="card-head"><h2>내 기기</h2></div>
+          <div class="list" id="trustedList"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2>주변에서 찾은 기기</h2>
+            <span class="scanning"><span class="pulse"></span>찾는 중</span>
+          </div>
+          <div class="list" id="nearbyList"></div>
+          <form class="probe" id="probeForm">
+            <span class="probe-label">안 보이나요? IP로 찾기</span>
+            <input id="probeInput" placeholder="예: 192.168.0.12" autocomplete="off" spellcheck="false" />
+            <button class="btn" type="submit">찾기</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="tab" id="tab-settings">
+        <header class="page-head">
+          <div>
+            <h1>설정</h1>
+            <p>설정은 이 컴퓨터에만 적용돼요. 바뀌면 바로 저장돼요.</p>
+          </div>
+        </header>
+
+        <div class="card">
+          <div class="card-head"><h2>이 컴퓨터</h2></div>
+          <div class="row">
+            <div class="row-text"><span class="row-title">이름</span><span class="row-sub">다른 기기에 이렇게 보여요</span></div>
+            <input class="text-input" id="nameInput" maxlength="40" spellcheck="false" />
+          </div>
+        </div>
+
+        <div class="card" id="hangulCard">
+          <div class="card-head"><h2>한/영 전환</h2><span class="tag">Mac</span></div>
+          <div class="mac-only">
+            <label class="row">
+              <div class="row-text"><span class="row-title">오른쪽 ⌘ 한 번 눌러 한/영 전환</span><span class="row-sub">맥에서 바로, 그리고 맥 키보드로 다른 컴퓨터를 조작할 때도 동작해요. ⌘C 같은 단축키는 그대로 써요.</span></div>
+              <span class="switch"><input type="checkbox" data-setting="right_cmd_hangul" /><span class="track"></span></span>
+            </label>
+            <label class="row">
+              <div class="row-text"><span class="row-title">윈도우 키보드의 한/영 키로 전환</span><span class="row-sub">윈도우 키보드로 이 맥을 조작할 때 한/영 키가 그대로 먹혀요.</span></div>
+              <span class="switch"><input type="checkbox" data-setting="lang1_hangul" /><span class="track"></span></span>
+            </label>
+            <label class="row">
+              <div class="row-text"><span class="row-title">오른쪽 Alt 한 번 눌러 전환</span><span class="row-sub">한/영 키가 없는 영문 키보드용이에요.</span></div>
+              <span class="switch"><input type="checkbox" data-setting="right_alt_hangul" /><span class="track"></span></span>
+            </label>
+            <div class="row">
+              <div class="row-text"><span class="row-title">전환 방식</span><span class="row-sub">잘 안 바뀌면 ‘⌃Space 보내기’로 바꿔 보세요.</span></div>
+              <div class="segmented" data-setting="hangul_method">
+                <button data-value="direct">바로 전환</button>
+                <button data-value="ctrl_space">⌃Space 보내기</button>
+              </div>
+            </div>
+          </div>
+          <div class="win-only note">
+            <div class="note-icon">한</div>
+            <div>이 PC는 따로 설정할 게 없어요. 맥 키보드로 이 PC를 조작할 때 <b>오른쪽 ⌘</b>을 한 번 누르면 이 PC의 한/영이 바뀌어요. (맥의 NoopFlow 설정에서 켜고 끌 수 있어요)</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>키보드 · 마우스</h2></div>
+          <label class="row">
+            <div class="row-text"><span class="row-title">Ctrl ↔ ⌘ 자동 맞춤</span><span class="row-sub">다른 OS 키보드로 조작할 때 복사·붙여넣기가 익숙한 키로 돼요. (윈도우 Ctrl+C → 맥 ⌘C)</span></div>
+            <span class="switch"><input type="checkbox" data-setting="swap_ctrl_cmd" /><span class="track"></span></span>
+          </label>
+          <div class="row">
+            <div class="row-text"><span class="row-title">마우스 속도</span><span class="row-sub">다른 컴퓨터가 이 화면을 조작할 때의 속도예요.</span></div>
+            <div class="slider-wrap">
+              <input type="range" min="0.5" max="2.5" step="0.1" data-setting="mouse_speed" />
+              <span class="slider-value" id="speedValue">1.0×</span>
+            </div>
+          </div>
+          <label class="row">
+            <div class="row-text"><span class="row-title">스크롤 방향 반대로</span><span class="row-sub">다른 컴퓨터에서 넘어온 스크롤이 거꾸로 느껴질 때 켜세요.</span></div>
+            <span class="switch"><input type="checkbox" data-setting="invert_scroll" /><span class="track"></span></span>
+          </label>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>클립보드 · 파일</h2></div>
+          <label class="row">
+            <div class="row-text"><span class="row-title">클립보드 공유</span><span class="row-sub">한쪽에서 복사한 글자와 이미지를 다른 쪽에서 바로 붙여넣어요.</span></div>
+            <span class="switch"><input type="checkbox" data-setting="clipboard_sync" /><span class="track"></span></span>
+          </label>
+          <label class="row">
+            <div class="row-text"><span class="row-title">복사한 파일을 붙여넣기로 보내기</span><span class="row-sub">파일을 복사(Ctrl/⌘+C)하고 옆 컴퓨터로 넘어가 붙여넣으면(Ctrl/⌘+V) 파일이 전송되고 폴더가 열려요.</span></div>
+            <span class="switch"><input type="checkbox" data-setting="paste_files" /><span class="track"></span></span>
+          </label>
+          <div class="row">
+            <div class="row-text"><span class="row-title">받은 파일 위치</span><span class="row-sub path" id="receiveDir"></span></div>
+            <button class="btn" id="openDirBtn">폴더 열기</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>단축키</h2></div>
+          <div class="row"><div class="row-text"><span class="row-title">내 화면으로 바로 돌아오기</span></div><span class="kbd-group"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd><kbd>H</kbd></span></div>
+          <div class="row"><div class="row-text"><span class="row-title">한/영 전환 (맥 키보드)</span></div><span class="kbd-group"><kbd>오른쪽 ⌘</kbd></span></div>
+        </div>
+        <p class="version">NoopFlow 0.1.0</p>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modal"><div class="modal" id="modalBody"></div></div>
+  <div class="toasts" id="toasts"></div>
+  <div class="transfers" id="transfers"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
