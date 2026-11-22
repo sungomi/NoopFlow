@@ -20,7 +20,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 
 use crate::config::{hex, TrustedPeer};
-use crate::protocol::{Msg, Os, Rect, PROTOCOL_VERSION};
+use crate::protocol::{Msg, Os, Rect, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
 
 pub const NOISE_XX: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 pub const NOISE_XX_PSK: &str = "Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s";
@@ -38,6 +38,8 @@ pub struct HelloInfo {
     pub name: String,
     pub os: Os,
     pub screen: Rect,
+    /// Peer's protocol version (ours for our own hello).
+    pub version: u32,
 }
 
 pub struct NetCtx {
@@ -229,11 +231,11 @@ async fn run_connection(ctx: Arc<NetCtx>, mut stream: TcpStream, initiator: bool
         .await?;
     let hello = match tokio::time::timeout(Duration::from_secs(10), crypto.recv(&mut rd)).await.map_err(|_| anyhow!("hello timeout"))?? {
         Msg::Hello { id, name, os, screen, version } => {
-            if version != PROTOCOL_VERSION {
-                ctx.events.send(NetEvent::Incompatible { name: name.clone(), newer: version > PROTOCOL_VERSION }).ok();
-                bail!("protocol version {version} != {PROTOCOL_VERSION}");
+            if version < MIN_PROTOCOL_VERSION {
+                ctx.events.send(NetEvent::Incompatible { name: name.clone(), newer: false }).ok();
+                bail!("protocol version {version} < {MIN_PROTOCOL_VERSION}");
             }
-            HelloInfo { id, name, os, screen }
+            HelloInfo { id, name, os, screen, version }
         }
         _ => bail!("expected hello"),
     };
@@ -450,7 +452,7 @@ mod tests {
     fn make(id: &str) -> (Arc<NetCtx>, mpsc::UnboundedReceiver<NetEvent>, Vec<u8>) {
         let kp = snow::Builder::new(NOISE_XX.parse().unwrap()).generate_keypair().unwrap();
         let (tx, rx) = mpsc::unbounded_channel();
-        let hello = HelloInfo { id: id.into(), name: id.to_uppercase(), os: Os::current(), screen: Rect::default() };
+        let hello = HelloInfo { id: id.into(), name: id.to_uppercase(), os: Os::current(), screen: Rect::default(), version: PROTOCOL_VERSION };
         (NetCtx::new(kp.private, hello, vec![], tx), rx, kp.public)
     }
 

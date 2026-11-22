@@ -414,6 +414,32 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px;
 .diag-value.good { color: var(--ok); }
 .diag-value.bad { color: var(--danger); }
 
+/* ------------------------------------------------------------- clipboard */
+.clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.clip-card { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; min-height: 260px; }
+.clip-card.me { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.clip-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px 10px; }
+.clip-head .device-icon { width: 36px; height: 36px; border-radius: 10px; }
+.clip-head .device-icon svg { width: 19px; height: 19px; }
+.clip-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.clip-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clip-meta { font-size: 12px; color: var(--text-3); }
+.kind-badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.kind-badge.empty { background: var(--surface-2); color: var(--text-3); }
+.clip-body { flex: 1; margin: 0 18px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); min-height: 120px; max-height: 220px; overflow: hidden; position: relative; }
+.clip-text { margin: 0; font-family: ui-monospace, "Cascadia Code", "D2Coding", Menlo, monospace; font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--text); user-select: text; -webkit-user-select: text; }
+.clip-body.fade::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: linear-gradient(transparent, var(--surface-2)); pointer-events: none; }
+.clip-image { display: grid; place-items: center; height: 100%; min-height: 96px; }
+.clip-image img { max-width: 100%; max-height: 190px; border-radius: 8px; box-shadow: var(--shadow-sm); background: repeating-conic-gradient(#0000 0 25%, #8882 0 50%) 0 0 / 14px 14px; }
+.clip-files { display: flex; flex-direction: column; gap: 6px; }
+.clip-file { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.clip-file svg { width: 16px; height: 16px; color: var(--accent); flex-shrink: 0; }
+.clip-file .fname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clip-file .fsize { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.clip-empty { display: grid; place-items: center; height: 100%; min-height: 96px; color: var(--text-3); font-size: 13px; text-align: center; line-height: 1.6; }
+.clip-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 18px 16px; }
+.clip-actions .btn { flex: 1; min-width: 0; }
+
 .version { text-align: center; color: var(--text-3); font-size: 12px; margin: 22px 0 0; }
 
 /* ---------------------------------------------------------------- modal */

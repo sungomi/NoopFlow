@@ -270,6 +270,82 @@ function renderPermBanner() {
     .join('');
 }
 
+// ------------------------------------------------------------- clipboard
+const FILE_ICON = '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+const KIND_LABEL = { text: '글자', image: '이미지', files: '파일', empty: '비어 있음' };
+
+function timeAgo(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 10) return '방금 복사';
+  if (s < 60) return `${s}초 전 복사`;
+  if (s < 3600) return `${Math.floor(s / 60)}분 전 복사`;
+  if (s < 86400) return `${Math.floor(s / 3600)}시간 전 복사`;
+  return `${Math.floor(s / 86400)}일 전 복사`;
+}
+
+function clipBody(c) {
+  if (!c || c.kind === 'empty') return { html: '<div class="clip-empty">복사된 게 없어요</div>', fade: false };
+  if (c.kind === 'text') {
+    const more = c.count > (c.text || '').length;
+    return { html: `<pre class="clip-text">${esc(c.text || '')}${more ? '…' : ''}</pre>`, fade: (c.text || '').split('\n').length > 8 || (c.text || '').length > 400 };
+  }
+  if (c.kind === 'image') {
+    return { html: `<div class="clip-image">${c.thumb ? `<img src="${c.thumb}" alt="" />` : ''}</div>`, fade: false };
+  }
+  const files = (c.files || []).slice(0, 8).map((f) => `
+    <div class="clip-file">${FILE_ICON}<span class="fname">${esc(f.path)}</span><span class="fsize">${fmtBytes(f.size)}</span></div>`).join('');
+  const rest = c.count > 8 ? `<div class="clip-meta">외 ${c.count - 8}개</div>` : '';
+  return { html: `<div class="clip-files">${files}${rest}</div>`, fade: false };
+}
+
+function clipMeta(c) {
+  if (!c || c.kind === 'empty') return '';
+  if (c.kind === 'text') return `${c.count.toLocaleString()}자 · ${timeAgo(c.at)}`;
+  if (c.kind === 'image') return `${c.width}×${c.height} · ${timeAgo(c.at)}`;
+  const total = (c.files || []).reduce((a, f) => a + f.size, 0);
+  return `${c.count}개 · ${fmtBytes(total)} · ${timeAgo(c.at)}`;
+}
+
+function renderClipboard() {
+  const grid = $('#clipGrid');
+  if (!grid || !S) return;
+  const clips = Object.fromEntries((S.clipboards || []).map((c) => [c.device_id, c]));
+  const online = S.devices.filter((d) => d.trusted && d.online);
+  const cards = [S.me, ...online].map((d) => {
+    const isMe = d.id === S.me.id;
+    const c = clips[d.id];
+    const oldPeer = !isMe && d.version && d.version < 3;
+    const kind = c?.kind || 'empty';
+    const body = oldPeer
+      ? { html: `<div class="clip-empty">${esc(d.name)}의 NoopFlow를<br>0.3.0 이상으로 업데이트하면 보여요</div>`, fade: false }
+      : clipBody(c);
+    let actions = '';
+    if (isMe) {
+      actions = online.length
+        ? online.map((p) => `<button class="btn" data-clip-push="${esc(p.id)}" ${kind === 'empty' ? 'disabled' : ''}>${esc(p.name)}로 보내기</button>`).join('')
+        : '<span class="clip-meta">연결된 기기가 없어요</span>';
+    } else if (!oldPeer) {
+      const label = kind === 'files' ? '이 컴퓨터로 다운로드' : '이 컴퓨터로 가져오기';
+      actions = `<button class="btn primary" data-clip-pull="${esc(d.id)}" ${kind === 'empty' ? 'disabled' : ''}>${label}</button>`;
+    }
+    return `
+      <div class="clip-card ${isMe ? 'me' : ''}">
+        <div class="clip-head">
+          <div class="device-icon">${ICON[d.os] || ICON.linux}</div>
+          <div class="clip-title">
+            <span class="clip-name">${esc(d.name)}${isMe ? ' <span class="tag">이 컴퓨터</span>' : ''}</span>
+            <span class="clip-meta">${esc(oldPeer ? '' : clipMeta(c))}</span>
+          </div>
+          <span class="kind-badge ${kind === 'empty' ? 'empty' : ''}">${KIND_LABEL[kind]}</span>
+        </div>
+        <div class="clip-body ${body.fade ? 'fade' : ''}">${body.html}</div>
+        <div class="clip-actions">${actions}</div>
+      </div>`;
+  });
+  grid.innerHTML = cards.join('');
+}
+
 // --------------------------------------------------------------- devices
 function renderDevices() {
   const trusted = S.devices.filter((d) => d.trusted);
@@ -609,6 +685,7 @@ function renderAll() {
   renderStatus();
   renderStage();
   renderDevices();
+  renderClipboard();
   renderSettings();
 }
 
@@ -630,6 +707,20 @@ function bind() {
     if (act === 'restart') invoke('restart_app');
   });
   $('#openDirBtn').addEventListener('click', () => invoke('open_receive_dir'));
+
+  $('#clipGrid').addEventListener('click', (e) => {
+    const pull = e.target.closest('[data-clip-pull]')?.dataset.clipPull;
+    const push = e.target.closest('[data-clip-push]')?.dataset.clipPush;
+    if (pull) {
+      invoke('clip_pull', { id: pull });
+      toast(`${nameOf(pull)}에서 가져오는 중…`);
+    }
+    if (push) invoke('clip_push', { id: push });
+  });
+  // "n분 전" labels stay fresh while the tab is open.
+  setInterval(() => {
+    if ($('#tab-clipboard').classList.contains('active')) renderClipboard();
+  }, 15000);
 
   $('#trustedList').addEventListener('click', (e) => {
     const id = e.target.closest('[data-unpair]')?.dataset.unpair;
@@ -763,7 +854,7 @@ async function init() {
 // ?os=mac previews the Mac-only settings. Used for README screenshots.
 function applyPreviewHash() {
   const h = location.hash.slice(1);
-  if (h === 'devices' || h === 'settings') showTab(h);
+  if (h === 'devices' || h === 'settings' || h === 'clipboard') showTab(h);
   if (h === 'pair') showPairCode({ id: 'mac', name: 'MacBook Pro', code: '482915' });
   if (h === 'close') onCloseRequested();
 }
@@ -772,7 +863,7 @@ function mockInvoke(cmd, args) {
     return Promise.resolve({
       me: { id: 'me', name: 'JH-DESKTOP', os: new URLSearchParams(location.search).get('os') || 'windows', trusted: true, online: true, nearby: true, addr: null, screen: { x: 0, y: 0, w: 2560, h: 1440 } },
       devices: [
-        { id: 'mac', name: 'MacBook Pro', os: 'mac', trusted: true, online: true, nearby: true, addr: '192.168.0.24', screen: { x: 0, y: 0, w: 1728, h: 1117 } },
+        { id: 'mac', name: 'MacBook Pro', os: 'mac', trusted: true, online: true, nearby: true, addr: '192.168.0.24', screen: { x: 0, y: 0, w: 1728, h: 1117 }, version: 3 },
         { id: 'lap', name: '거실 노트북', os: 'windows', trusted: false, online: false, nearby: true, addr: '192.168.0.31', screen: null },
       ],
       layout: { version: 1, cells: [{ id: 'me', x: 0, y: 0 }, { id: 'mac', x: 1, y: 0 }] },
@@ -791,6 +882,10 @@ function mockInvoke(cmd, args) {
         };
         return { permission: !q, perm: states[q] || states.restart };
       })(),
+      clipboards: [
+        { device_id: 'me', kind: 'text', text: 'const sum = (a, b) => a + b;\nconsole.log(sum(2, 3)); // 5\n\n// 맥에서 바로 붙여넣기 해 보세요', count: 82, width: 0, height: 0, thumb: null, files: [], at: Date.now() - 45000 },
+        { device_id: 'mac', kind: 'files', text: null, count: 3, width: 0, height: 0, thumb: null, files: [{ path: '기획안_최종.pdf', size: 2483000 }, { path: 'screenshot 2026-11-22.png', size: 812000 }, { path: 'notes.md', size: 4100 }], at: Date.now() - 360000 },
+      ],
       receive_dir: 'C:\\Users\\me\\Downloads\\NoopFlow',
       pairing_with: null,
     });

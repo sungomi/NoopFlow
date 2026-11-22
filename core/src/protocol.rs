@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 /// v2: MouseMove carries DPI-independent logical points as f32.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// v3: clipboard previews (ClipInfo / ClipRequest / ClipPut).
+pub const PROTOCOL_VERSION: u32 = 3;
+/// Oldest peer we still talk to; newer messages are only sent to peers that know them.
+pub const MIN_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -184,10 +187,46 @@ pub enum Msg {
     FileDone { id: u64 },
     FileCancel { id: u64 },
     Ping,
+    // ---- protocol v3 (only sent to peers that said version >= 3) ----
+    /// What is on the sender's clipboard right now (preview only).
+    ClipInfo(ClipSummary),
+    /// "Send me your clipboard": text/images come back as ClipPut, files as a transfer.
+    ClipRequest,
+    /// Explicit clipboard hand-over: always applied, unlike the automatic `Clipboard` sync.
+    ClipPut(ClipData),
 }
 
 impl Msg {
     pub fn is_bulk(&self) -> bool {
-        matches!(self, Msg::Clipboard(_) | Msg::FileOffer { .. } | Msg::FileChunk { .. } | Msg::FileDone { .. })
+        matches!(
+            self,
+            Msg::Clipboard(_) | Msg::FileOffer { .. } | Msg::FileChunk { .. } | Msg::FileDone { .. } | Msg::ClipInfo(_) | Msg::ClipPut(_)
+        )
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipKind {
+    #[default]
+    Empty,
+    Text,
+    Image,
+    Files,
+}
+
+/// A small preview of a clipboard, cheap enough to send on every change.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ClipSummary {
+    pub kind: ClipKind,
+    /// First part of the text (whole text is fetched on request).
+    pub text: Option<String>,
+    pub chars: usize,
+    pub width: u32,
+    pub height: u32,
+    /// PNG thumbnail (max ~240 px) for images.
+    pub thumb: Vec<u8>,
+    pub files: Vec<FileMeta>,
+    /// Unix ms when this content was copied.
+    pub at: u64,
 }

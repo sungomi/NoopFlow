@@ -33,15 +33,53 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked
       - name: Test core
         run: cargo test -p noopflow-core
+      # A fixed self-signed certificate gives every build the same code identity,
+      # so macOS keeps the Accessibility permission across updates (ad-hoc
+      # signatures change with every build). Falls back to ad-hoc without secrets.
+      - name: Import signing certificate (macOS)
+        id: macsign
+        if: runner.os == 'macOS'
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "No signing secrets; using ad-hoc signature."
+            echo "config={}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/noopflow.keychain-db"
+          KP="$(uuidgen)"
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KP" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KP" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KP" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # Trust it for code signing on this runner so codesign accepts the identity.
+          openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin env:MAC_CERT_PASSWORD -nokeys -legacy -out "$RUNNER_TEMP/cert.pem" 2>/dev/null \
+            || openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin env:MAC_CERT_PASSWORD -nokeys -out "$RUNNER_TEMP/cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/cert.pem"
+          security find-identity -p codesigning "$KC"
+          echo 'config={"bundle":{"macOS":{"signingIdentity":"NoopFlow Developer"}}}' >> "$GITHUB_OUTPUT"
       - name: Build app
         working-directory: src-tauri
-        run: cargo tauri build ${{ matrix.args }}
+        shell: bash
+        run: |
+          if [ -n '${{ steps.macsign.outputs.config }}' ] && [ '${{ steps.macsign.outputs.config }}' != '{}' ]; then
+            cargo tauri build ${{ matrix.args }} --config '${{ steps.macsign.outputs.config }}'
+          else
+            cargo tauri build ${{ matrix.args }}
+          fi
       - name: Verify macOS code signature
         if: runner.os == 'macOS'
         run: |
           APP=target/universal-apple-darwin/release/bundle/macos/NoopFlow.app
           codesign --verify --deep --strict --verbose=2 "$APP"
-          codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier|Format"
+          codesign -dv "$APP" 2>&1 | grep -E "Signature|Authority|Identifier|Format"
+          echo "Designated requirement (what macOS remembers for permissions):"
+          codesign -d -r- "$APP" 2>&1 | tail -n 1
       - uses: actions/upload-artifact@v4
         with:
           name: noopflow-${{ matrix.os }}

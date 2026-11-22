@@ -115,6 +115,41 @@ extern "C" {
 extern "C" {
     fn IOHIDCheckAccess(request_type: u32) -> u32;
     fn IOHIDRequestAccess(request_type: u32) -> bool;
+    fn IOServiceMatching(name: *const c_char) -> *mut c_void;
+    fn IOServiceGetMatchingService(main_port: u32, matching: *const c_void) -> u32;
+    fn IOServiceOpen(service: u32, owning_task: u32, kind: u32, connect: *mut u32) -> i32;
+    fn IOServiceClose(connect: u32) -> i32;
+    fn IOObjectRelease(object: u32) -> i32;
+    fn IOHIDGetModifierLockState(handle: u32, selector: i32, state: *mut bool) -> i32;
+    fn IOHIDSetModifierLockState(handle: u32, selector: i32, state: bool) -> i32;
+}
+
+extern "C" {
+    static mach_task_self_: u32;
+}
+
+/// Flip the real Caps Lock state (and its light). A synthetic Caps Lock key event
+/// doesn't change it on macOS, and on Korean setups would switch 한/영 instead.
+fn toggle_caps_lock() -> Option<bool> {
+    const IOHID_PARAM_CONNECT: u32 = 1;
+    const CAPS_LOCK_STATE: i32 = 1;
+    unsafe {
+        let svc = IOServiceGetMatchingService(0, IOServiceMatching(c"IOHIDSystem".as_ptr()));
+        if svc == 0 {
+            return None;
+        }
+        let mut conn = 0u32;
+        let r = IOServiceOpen(svc, mach_task_self_, IOHID_PARAM_CONNECT, &mut conn);
+        IOObjectRelease(svc);
+        if r != 0 {
+            return None;
+        }
+        let mut on = false;
+        IOHIDGetModifierLockState(conn, CAPS_LOCK_STATE, &mut on);
+        let ok = IOHIDSetModifierLockState(conn, CAPS_LOCK_STATE, !on) == 0;
+        IOServiceClose(conn);
+        ok.then_some(!on)
+    }
 }
 const IOHID_REQUEST_LISTEN: u32 = 1;
 const IOHID_ACCESS_GRANTED: u32 = 0;
@@ -129,6 +164,8 @@ extern "C" {
     fn objc_getClass(name: *const c_char) -> *mut c_void;
     fn sel_registerName(name: *const c_char) -> *mut c_void;
     fn objc_msgSend();
+    fn objc_autoreleasePoolPush() -> *mut c_void;
+    fn objc_autoreleasePoolPop(pool: *mut c_void);
 }
 
 // Event types
@@ -146,6 +183,7 @@ const SCROLL: u32 = 22;
 const OTHER_DOWN: u32 = 25;
 const OTHER_UP: u32 = 26;
 const OTHER_DRAGGED: u32 = 27;
+const SYSTEM_DEFINED: u32 = 14;
 const TAP_DISABLED_TIMEOUT: u32 = 0xFFFF_FFFE;
 const TAP_DISABLED_USER: u32 = 0xFFFF_FFFF;
 
@@ -343,11 +381,86 @@ unsafe extern "C" fn tap_cb(_proxy: *mut c_void, etype: u32, ev: CGEventRef, _us
                 ev
             }
         }
+        SYSTEM_DEFINED => {
+            if !grabbing {
+                return ev;
+            }
+            // Volume / playback / brightness keys. While controlling another
+            // computer they must not act on this Mac; volume and playback are forwarded.
+            match media_from_event(ev) {
+                Some((Some(code), down)) => {
+                    emit(InputEvent::Key { code, down });
+                    null_mut()
+                }
+                Some((None, _)) => null_mut(),
+                None => ev,
+            }
+        }
         _ => ev,
     }
 }
 
-const TAP_MASK: u64 = (1 << LEFT_DOWN)
+/// Decode a system-defined event: Some((key, down)) for aux keys (subtype 8).
+unsafe fn media_from_event(ev: CGEventRef) -> Option<(Option<u16>, bool)> {
+    let pool = objc_autoreleasePoolPush();
+    let res = (|| {
+        let cls = objc_getClass(c"NSEvent".as_ptr());
+        if cls.is_null() {
+            return None;
+        }
+        let from_cg: unsafe extern "C" fn(*mut c_void, *mut c_void, CGEventRef) -> *mut c_void = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let get_i16: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i16 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let get_i64: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i64 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let ns = from_cg(cls, sel_registerName(c"eventWithCGEvent:".as_ptr()), ev);
+        if ns.is_null() || get_i16(ns, sel_registerName(c"subtype".as_ptr())) != 8 {
+            return None;
+        }
+        let data1 = get_i64(ns, sel_registerName(c"data1".as_ptr()));
+        let keytype = (data1 & 0xFFFF_0000) >> 16;
+        let down = ((data1 & 0xFF00) >> 8) == 0xA;
+        Some((keys::from_mac_media(keytype), down))
+    })();
+    objc_autoreleasePoolPop(pool);
+    res
+}
+
+/// Post a volume/playback key as macOS does (an NSSystemDefined aux-key event).
+unsafe fn post_media(code: u16, down: bool) {
+    let Some(keytype) = keys::to_mac_media(code) else { return };
+    let pool = objc_autoreleasePoolPush();
+    let cls = objc_getClass(c"NSEvent".as_ptr());
+    if !cls.is_null() {
+        type Make = unsafe extern "C" fn(*mut c_void, *mut c_void, u64, CGPoint, u64, f64, i64, *mut c_void, i16, i64, i64) -> *mut c_void;
+        let make: Make = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let to_cg: unsafe extern "C" fn(*mut c_void, *mut c_void) -> CGEventRef = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let state: i64 = if down { 0xA } else { 0xB };
+        let ns = make(
+            cls,
+            sel_registerName(c"otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:".as_ptr()),
+            SYSTEM_DEFINED as u64,
+            CGPoint { x: 0.0, y: 0.0 },
+            (state as u64) << 8,
+            0.0,
+            0,
+            null_mut(),
+            8,
+            (keytype << 16) | (state << 8),
+            -1,
+        );
+        if !ns.is_null() {
+            let cg = to_cg(ns, sel_registerName(c"CGEvent".as_ptr()));
+            if !cg.is_null() {
+                // Owned by the NSEvent: post it, don't release it.
+                CGEventSetIntegerValueField(cg, F_USER_DATA, MAGIC);
+                CGEventPost(HID_TAP, cg);
+            }
+        }
+    }
+    objc_autoreleasePoolPop(pool);
+}
+
+const TAP_MASK: u64 = (1 << SYSTEM_DEFINED)
+    | (1 << LEFT_DOWN)
     | (1 << LEFT_UP)
     | (1 << RIGHT_DOWN)
     | (1 << RIGHT_UP)
@@ -528,6 +641,10 @@ fn recompute_mods(held: &[u16]) -> u64 {
 }
 
 pub fn inject_key(code: u16, down: bool) {
+    if keys::is_media(code) {
+        unsafe { post_media(code, down) };
+        return;
+    }
     let Some(kc) = keys::to_mac(code) else { return };
     let mut inj = INJ.lock().unwrap();
     let repeat = down && inj.held.contains(&code);
@@ -550,13 +667,8 @@ pub fn inject_key(code: u16, down: bool) {
         }
         if code == hid::CAPS_LOCK {
             if down {
-                inj.caps = !inj.caps;
-                let ev = CGEventCreateKeyboardEvent(inj.source(), kc, true);
-                if !ev.is_null() {
-                    CGEventSetType(ev, FLAGS_CHANGED);
-                    CGEventSetFlags(ev, inj.flags());
-                    post(ev);
-                }
+                let _ = kc;
+                inj.caps = toggle_caps_lock().unwrap_or(!inj.caps);
             }
             return;
         }

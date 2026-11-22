@@ -16,13 +16,13 @@ use anyhow::Result;
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::clipboard::{self, ClipWatcher};
+use crate::clipboard::{self, ClipChange, ClipWatcher, LocalClip};
 use crate::config::{hex, Config, Settings, TrustedPeer};
 use crate::files::{self, FileEvent};
 use crate::keys::{self, hid};
 use crate::net::{self, Announce, Discovery, HelloInfo, NetCtx, NetEvent, PeerLink};
 use crate::platform::{self, InputEvent};
-use crate::protocol::{Button, Cell, ClipData, Layout, Msg, Os, Rect, Side};
+use crate::protocol::{Button, Cell, ClipData, ClipKind, ClipSummary, Layout, Msg, Os, Rect, Side};
 
 const TAP_WINDOW: Duration = Duration::from_millis(600);
 /// ~250 Hz: smooth on any display while cutting the message rate of 1000 Hz mice.
@@ -40,6 +40,8 @@ pub struct DeviceView {
     pub nearby: bool,
     pub addr: Option<String>,
     pub screen: Option<Rect>,
+    /// Peer's protocol version (0 when not connected).
+    pub version: u32,
 }
 
 /// Live counters shown in Settings → 진단, to tell "nothing arrives" from "arrives but can't move".
@@ -52,6 +54,51 @@ pub struct Diag {
     /// Cursor moves sent while controlling another computer.
     pub moves_out: u64,
     pub last_controller: Option<String>,
+}
+
+/// One computer's clipboard as shown in the Clipboard tab.
+#[derive(Serialize, Clone, Debug)]
+pub struct ClipView {
+    pub device_id: String,
+    pub kind: ClipKind,
+    pub text: Option<String>,
+    /// Characters of text, or number of files.
+    pub count: usize,
+    pub width: u32,
+    pub height: u32,
+    /// data: URL of the image thumbnail.
+    pub thumb: Option<String>,
+    pub files: Vec<crate::protocol::FileMeta>,
+    pub at: u64,
+}
+
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity((data.len() + 2) / 3 * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        s.push(T[(n >> 18) as usize & 63] as char);
+        s.push(T[(n >> 12) as usize & 63] as char);
+        s.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        s.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    s
+}
+
+impl ClipView {
+    fn from_summary(device_id: &str, s: &ClipSummary) -> ClipView {
+        ClipView {
+            device_id: device_id.to_string(),
+            kind: s.kind,
+            text: s.text.clone(),
+            count: if s.kind == ClipKind::Files { s.files.len().max(s.chars) } else { s.chars },
+            width: s.width,
+            height: s.height,
+            thumb: (!s.thumb.is_empty()).then(|| format!("data:image/png;base64,{}", base64(&s.thumb))),
+            files: s.files.clone(),
+            at: s.at,
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -67,6 +114,7 @@ pub struct Snapshot {
     pub permission: bool,
     pub perm: platform::PermStatus,
     pub diag: Diag,
+    pub clipboards: Vec<ClipView>,
     pub receive_dir: String,
     pub pairing_with: Option<String>,
 }
@@ -100,6 +148,10 @@ pub enum Cmd {
     Reveal(String),
     RequestPermission,
     RequestInputMonitoring,
+    /// Copy another computer's clipboard here (files are downloaded).
+    ClipPull(String),
+    /// Hand this computer's clipboard to another computer.
+    ClipPush(String),
 }
 
 #[derive(Clone)]
@@ -228,7 +280,7 @@ enum Mode {
 struct Chans {
     net_rx: mpsc::UnboundedReceiver<NetEvent>,
     input_rx: mpsc::UnboundedReceiver<InputEvent>,
-    clip_rx: mpsc::UnboundedReceiver<ClipData>,
+    clip_rx: mpsc::UnboundedReceiver<ClipChange>,
     file_rx: mpsc::UnboundedReceiver<FileEvent>,
 }
 
@@ -272,6 +324,9 @@ struct Engine {
     pairing_with: Option<String>,
     // clipboard & files
     clip: ClipWatcher,
+    local_clip: LocalClip,
+    local_clip_summary: ClipSummary,
+    peer_clips: HashMap<String, ClipSummary>,
     last_paste_copy: Option<Instant>,
     files_tx: mpsc::UnboundedSender<FileEvent>,
     receiver: files::Receiver,
@@ -292,7 +347,7 @@ impl Engine {
         let (file_tx, file_rx) = mpsc::unbounded_channel();
 
         let monitors = platform::screens();
-        let hello = HelloInfo { id: cfg.id.clone(), name: cfg.name.clone(), os: Os::current(), screen: Rect::union(&monitors) };
+        let hello = HelloInfo { id: cfg.id.clone(), name: cfg.name.clone(), os: Os::current(), screen: Rect::union(&monitors), version: crate::protocol::PROTOCOL_VERSION };
         let private = crate::config::unhex(&cfg.private_key).unwrap_or_default();
         let net = NetCtx::new(private, hello, cfg.trusted.clone(), net_tx);
 
@@ -351,6 +406,9 @@ impl Engine {
             local_rcmd: None,
             pairing_with: None,
             clip,
+            local_clip: LocalClip::Empty,
+            local_clip_summary: ClipSummary::default(),
+            peer_clips: HashMap::new(),
             last_paste_copy: None,
             files_tx: file_tx,
             receiver,
@@ -412,6 +470,7 @@ impl Engine {
             nearby: true,
             addr: None,
             screen: Some(Rect::union(&self.monitors)),
+            version: crate::protocol::PROTOCOL_VERSION,
         };
         let mut devices: Vec<DeviceView> = self
             .cfg
@@ -429,6 +488,7 @@ impl Engine {
                     nearby: seen.is_some(),
                     addr: peer.map(|p| p.addr.ip().to_string()).or_else(|| seen.map(|s| s.addr.to_string())).or_else(|| t.last_addr.clone()),
                     screen: peer.map(|p| p.hello.screen),
+                    version: peer.map(|p| p.hello.version).unwrap_or(0),
                 }
             })
             .collect();
@@ -445,6 +505,7 @@ impl Engine {
                 nearby: true,
                 addr: Some(s.addr.to_string()),
                 screen: None,
+                version: 0,
             });
         }
         devices.sort_by(|a, b| b.trusted.cmp(&a.trusted).then(a.name.cmp(&b.name)));
@@ -462,6 +523,7 @@ impl Engine {
             permission: self.permission,
             perm: self.perm,
             diag: self.diag.clone(),
+            clipboards: self.clip_views(),
             receive_dir: self.cfg.receive_dir().to_string_lossy().into_owned(),
             pairing_with: self.pairing_with.clone(),
         }
@@ -618,6 +680,7 @@ impl Engine {
             NetEvent::Disconnected { conn, id } => {
                 if self.peers.get(&id).map_or(false, |p| p.conn == conn) {
                     self.peers.remove(&id);
+                    self.peer_clips.remove(&id);
                     self.receiver.drop_peer(&id);
                     if matches!(&self.mode, Mode::Controlling(t) if *t == id) {
                         self.mode = Mode::Local;
@@ -685,6 +748,9 @@ impl Engine {
         let fresh = !self.peers.contains_key(&id);
         let peer = Peer { conn, hello, addr, initiator_id, link };
         peer.send(Msg::Layout(self.cfg.layout.clone()));
+        if peer.hello.version >= 3 {
+            peer.send(Msg::ClipInfo(self.local_clip_summary.clone()));
+        }
         if fresh && !paired {
             self.toast("ok", format!("{} 연결됨", peer.hello.name));
         }
@@ -779,6 +845,32 @@ impl Engine {
                 if self.cfg.settings.clipboard_sync {
                     self.clip.set(data);
                 }
+            }
+            Msg::ClipInfo(summary) => {
+                self.peer_clips.insert(from.to_string(), summary);
+                self.emit_state();
+            }
+            Msg::ClipRequest => {
+                let name = self.peer_name(from);
+                match self.local_clip.clone() {
+                    LocalClip::Files(paths) => self.send_files(from, paths, true),
+                    clip => {
+                        if let (Some(data), Some(p)) = (clip.as_data(), self.peers.get(from)) {
+                            p.send(Msg::ClipPut(data));
+                        } else {
+                            self.toast("info", format!("{name}에서 클립보드를 요청했지만 복사된 게 없어요"));
+                        }
+                    }
+                }
+            }
+            Msg::ClipPut(data) => {
+                let what = match &data {
+                    ClipData::Text(_) => "글자",
+                    ClipData::Image { .. } => "이미지",
+                };
+                self.clip.set(data);
+                let key = if self.os == Os::Mac { "⌘V" } else { "Ctrl+V" };
+                self.toast("ok", format!("{}의 {what}를 가져왔어요. {key}로 붙여넣으세요", self.peer_name(from)));
             }
             m @ (Msg::FileOffer { .. } | Msg::FileChunk { .. } | Msg::FileDone { .. } | Msg::FileCancel { .. }) => {
                 let name = self.peer_name(from);
@@ -1075,12 +1167,56 @@ impl Engine {
 
     // ------------------------------------------------- clipboard & files
 
-    fn on_clip(&mut self, data: ClipData) {
-        if !self.cfg.settings.clipboard_sync {
-            return;
+    fn on_clip(&mut self, change: ClipChange) {
+        self.local_clip = change.clip;
+        self.local_clip_summary = self.local_clip.summary(now_ms());
+        // Automatic sync of text/images (not echoed back when the data came from a peer).
+        if self.cfg.settings.clipboard_sync && !change.from_remote {
+            if let Some(data) = self.local_clip.as_data() {
+                for p in self.peers.values() {
+                    p.send(Msg::Clipboard(data.clone()));
+                }
+            }
         }
-        for p in self.peers.values() {
-            p.send(Msg::Clipboard(data.clone()));
+        for p in self.peers.values().filter(|p| p.hello.version >= 3) {
+            p.send(Msg::ClipInfo(self.local_clip_summary.clone()));
+        }
+        self.emit_state();
+    }
+
+    fn clip_views(&self) -> Vec<ClipView> {
+        let mut v = vec![ClipView::from_summary(&self.cfg.id, &self.local_clip_summary)];
+        for (id, s) in &self.peer_clips {
+            if self.peers.contains_key(id) {
+                v.push(ClipView::from_summary(id, s));
+            }
+        }
+        v
+    }
+
+    fn clip_pull(&mut self, id: &str) {
+        match self.peers.get(id) {
+            Some(p) if p.hello.version >= 3 => p.send(Msg::ClipRequest),
+            Some(_) => self.toast("error", "상대 기기의 NoopFlow를 0.3.0 이상으로 업데이트해 주세요"),
+            None => self.toast("error", "연결된 기기에서만 가져올 수 있어요"),
+        }
+    }
+
+    fn clip_push(&mut self, id: &str) {
+        let name = self.peer_name(id);
+        match self.local_clip.clone() {
+            LocalClip::Files(paths) => {
+                self.send_files(id, paths, true);
+            }
+            clip => match (clip.as_data(), self.peers.get(id)) {
+                (Some(data), Some(p)) if p.hello.version >= 3 => {
+                    p.send(Msg::ClipPut(data));
+                    self.toast("ok", format!("{name}로 클립보드를 보냈어요"));
+                }
+                (Some(_), Some(_)) => self.toast("error", "상대 기기의 NoopFlow를 0.3.0 이상으로 업데이트해 주세요"),
+                (None, _) => self.toast("info", "이 컴퓨터에 복사된 게 없어요"),
+                (_, None) => self.toast("error", "연결된 기기에만 보낼 수 있어요"),
+            },
         }
     }
 
@@ -1232,6 +1368,8 @@ impl Engine {
             Cmd::Reveal(p) => files::reveal(std::path::Path::new(&p)),
             Cmd::RequestPermission => platform::request_permission(),
             Cmd::RequestInputMonitoring => platform::request_input_monitoring(),
+            Cmd::ClipPull(id) => self.clip_pull(&id),
+            Cmd::ClipPush(id) => self.clip_push(&id),
         }
     }
 }

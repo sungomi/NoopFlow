@@ -16,6 +16,15 @@ pub mod hid {
     pub const PAUSE: u16 = 0x48;
     pub const LANG1: u16 = 0x90; // 한/영
     pub const LANG2: u16 = 0x91; // 한자
+    pub const MUTE: u16 = 0x7F;
+    pub const VOLUME_UP: u16 = 0x80;
+    pub const VOLUME_DOWN: u16 = 0x81;
+    // Media transport keys live on the HID consumer page; NoopFlow gives them
+    // private codes above the keyboard page.
+    pub const MEDIA_PLAY_PAUSE: u16 = 0x100;
+    pub const MEDIA_NEXT: u16 = 0x101;
+    pub const MEDIA_PREV: u16 = 0x102;
+    pub const MEDIA_STOP: u16 = 0x103;
     pub const LCTRL: u16 = 0xE0;
     pub const LSHIFT: u16 = 0xE1;
     pub const LALT: u16 = 0xE2;
@@ -105,6 +114,7 @@ const WIN_TABLE: &[(u16, bool, Hid)] = &[
     (0x4F, false, 0x59), (0x50, false, 0x5A), (0x51, false, 0x5B), (0x52, false, 0x62),
     (0x53, false, 0x63), // keypad
     (0x56, false, 0x64), // Intl backslash
+    (0x59, false, 0x67), // KP =
     (0x57, false, 0x44), (0x58, false, 0x45), // F11 F12
     (0x64, false, 0x68), (0x65, false, 0x69), (0x66, false, 0x6A), (0x67, false, 0x6B), // F13..F16
     (0x68, false, 0x6C), (0x69, false, 0x6D), (0x6A, false, 0x6E), (0x6B, false, 0x6F), // F17..F20
@@ -161,6 +171,14 @@ pub fn from_win(scan: u32, extended: bool, vk: u32) -> Option<Hid> {
         0xA5 => return Some(hid::RALT),
         0x5B => return Some(hid::LGUI),
         0x5C => return Some(hid::RGUI),
+        // Media keys (volume, playback).
+        0xAD => return Some(hid::MUTE),
+        0xAE => return Some(hid::VOLUME_DOWN),
+        0xAF => return Some(hid::VOLUME_UP),
+        0xB0 => return Some(hid::MEDIA_NEXT),
+        0xB1 => return Some(hid::MEDIA_PREV),
+        0xB2 => return Some(hid::MEDIA_STOP),
+        0xB3 => return Some(hid::MEDIA_PLAY_PAUSE),
         _ => {}
     }
     let scan = (scan & 0xFF) as u16;
@@ -182,6 +200,13 @@ pub fn to_win(code: Hid) -> Option<WinKey> {
         hid::LANG2 => return Some(WinKey::Vk { vk: VK_HANJA as u16, extended: false }),
         hid::PAUSE => return Some(WinKey::Vk { vk: VK_PAUSE as u16, extended: false }),
         hid::NUM_LOCK => return Some(WinKey::Vk { vk: VK_NUMLOCK as u16, extended: true }),
+        hid::MUTE => return Some(WinKey::Vk { vk: 0xAD, extended: true }),
+        hid::VOLUME_DOWN => return Some(WinKey::Vk { vk: 0xAE, extended: true }),
+        hid::VOLUME_UP => return Some(WinKey::Vk { vk: 0xAF, extended: true }),
+        hid::MEDIA_NEXT => return Some(WinKey::Vk { vk: 0xB0, extended: true }),
+        hid::MEDIA_PREV => return Some(WinKey::Vk { vk: 0xB1, extended: true }),
+        hid::MEDIA_STOP => return Some(WinKey::Vk { vk: 0xB2, extended: true }),
+        hid::MEDIA_PLAY_PAUSE => return Some(WinKey::Vk { vk: 0xB3, extended: true }),
         _ => {}
     }
     WIN_TABLE
@@ -228,11 +253,48 @@ const MAC_TABLE: &[(u16, Hid)] = &[
     (0x3E, 0xE4), (0x3C, 0xE5), (0x3D, 0xE6), (0x36, 0xE7), // modifiers
 ];
 
+pub fn is_media(code: Hid) -> bool {
+    matches!(code, hid::MUTE | hid::VOLUME_UP | hid::VOLUME_DOWN) || (0x100..=0x103).contains(&code)
+}
+
+/// macOS "NX" auxiliary key types (sent as system-defined events, not key events).
+pub fn to_mac_media(code: Hid) -> Option<i64> {
+    Some(match code {
+        hid::VOLUME_UP => 0,
+        hid::VOLUME_DOWN => 1,
+        hid::MUTE => 7,
+        hid::MEDIA_PLAY_PAUSE | hid::MEDIA_STOP => 16,
+        hid::MEDIA_NEXT => 17,
+        hid::MEDIA_PREV => 18,
+        _ => return None,
+    })
+}
+
+pub fn from_mac_media(keytype: i64) -> Option<Hid> {
+    Some(match keytype {
+        0 => hid::VOLUME_UP,
+        1 => hid::VOLUME_DOWN,
+        7 => hid::MUTE,
+        16 => hid::MEDIA_PLAY_PAUSE,
+        17 | 19 => hid::MEDIA_NEXT,
+        18 | 20 => hid::MEDIA_PREV,
+        _ => return None,
+    })
+}
+
 pub fn from_mac(keycode: u16) -> Option<Hid> {
     MAC_TABLE.iter().find(|(k, _)| *k == keycode).map(|(_, h)| *h)
 }
 
 pub fn to_mac(code: Hid) -> Option<u16> {
+    // Mac F13-F15 double as PrintScreen/ScrollLock/Pause in MAC_TABLE; real F13-F15
+    // from a Windows keyboard still need a key.
+    match code {
+        0x68 => return Some(0x69), // F13
+        0x69 => return Some(0x6B), // F14
+        0x6A => return Some(0x71), // F15
+        _ => {}
+    }
     MAC_TABLE.iter().find(|(_, h)| *h == code).map(|(k, _)| *k)
 }
 
@@ -278,6 +340,39 @@ mod tests {
         assert!(!is_fake_shift(0x2A, false));
         assert_eq!(from_win(0x2A, false, 0xA0), Some(hid::LSHIFT));
         assert_eq!(from_win(0x1D, true, 0xA3), Some(hid::RCTRL));
+    }
+
+    /// Every key one OS can send must be typeable on the other.
+    #[test]
+    fn every_key_has_a_counterpart() {
+        let mut missing = Vec::new();
+        for (_, _, h) in WIN_TABLE {
+            // 한/영 and 한자 are handled specially on the Mac (input source switch).
+            if to_mac(*h).is_none() && !matches!(*h, hid::LANG1 | hid::LANG2) {
+                missing.push(format!("win->mac {h:#04x}"));
+            }
+        }
+        for (_, h) in MAC_TABLE {
+            if to_win(*h).is_none() {
+                missing.push(format!("mac->win {h:#04x}"));
+            }
+        }
+        for code in [hid::MUTE, hid::VOLUME_UP, hid::VOLUME_DOWN, hid::MEDIA_PLAY_PAUSE, hid::MEDIA_NEXT, hid::MEDIA_PREV] {
+            if to_mac_media(code).is_none() || to_win(code).is_none() {
+                missing.push(format!("media {code:#05x}"));
+            }
+        }
+        assert!(missing.is_empty(), "unmapped keys: {missing:?}");
+    }
+
+    #[test]
+    fn media_keys_round_trip() {
+        for vk in 0xADu32..=0xB3 {
+            let h = from_win(0, true, vk).expect("media vk");
+            assert!(is_media(h));
+            assert!(matches!(to_win(h), Some(WinKey::Vk { vk: v, .. }) if v as u32 == vk));
+        }
+        assert_eq!(from_mac_media(to_mac_media(hid::VOLUME_UP).unwrap()), Some(hid::VOLUME_UP));
     }
 
     #[test]

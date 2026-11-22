@@ -85,6 +85,16 @@ fn request_input_monitoring(core: State<CoreHandle>) {
     core.send(Cmd::RequestInputMonitoring);
 }
 
+#[tauri::command]
+fn clip_pull(core: State<CoreHandle>, id: String) {
+    core.send(Cmd::ClipPull(id));
+}
+
+#[tauri::command]
+fn clip_push(core: State<CoreHandle>, id: String) {
+    core.send(Cmd::ClipPush(id));
+}
+
 /// macOS applies newly granted privacy permissions only to a fresh process.
 #[tauri::command]
 fn restart_app(app: AppHandle) {
@@ -176,11 +186,12 @@ fn main() {
             let autostart_label = if cfg!(target_os = "macos") { "로그인 시 자동 실행" } else { "Windows 시작 시 자동 실행" };
             let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", autostart_label, true, autostart_on, None::<&str>)?;
+            let clipboard = MenuItem::with_id(app, "clipboard", "클립보드…", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "설정…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "NoopFlow 종료", true, None::<&str>)?;
             let sep1 = PredefinedMenuItem::separator(app)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&status, &sep1, &open, &lock, &autostart, &settings, &sep2, &quit])?;
+            let menu = Menu::with_items(app, &[&status, &sep1, &open, &clipboard, &lock, &autostart, &settings, &sep2, &quit])?;
             app.manage(TrayItems { status: status.clone(), lock: lock.clone(), autostart: autostart.clone() });
 
             let handle = app.handle().clone();
@@ -212,6 +223,10 @@ fn main() {
             }
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "open" => show_main(app),
+                "clipboard" => {
+                    show_main(app);
+                    let _ = app.emit("open-tab", "clipboard");
+                }
                 "settings" => {
                     show_main(app);
                     let _ = app.emit("open-tab", "settings");
@@ -277,7 +292,9 @@ fn main() {
             get_autostart,
             set_autostart,
             hide_window,
-            quit_app
+            quit_app,
+            clip_pull,
+            clip_push
         ])
         .build(tauri::generate_context!())
         .expect("error while building NoopFlow");
