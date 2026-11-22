@@ -28,6 +28,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "sungomi",
+    "copyright": "Copyright (c) 2026 sungomi",
     "category": "Utility",
     "shortDescription": "One keyboard and mouse for your Windows and Mac",
     "icon": [
