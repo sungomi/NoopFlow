@@ -725,8 +725,20 @@ $('#modal').addEventListener('click', (e) => {
   if (act === 'quit') invoke('quit_app');
 });
 
+async function showVersion() {
+  let v = (document.querySelector('.version')?.textContent || '').replace('NoopFlow ', '').trim();
+  try {
+    if (!MOCK && T.app?.getVersion) v = await T.app.getVersion();
+  } catch {}
+  if (!v) return;
+  $('#appVersion').textContent = `v${v}`;
+  const footer = document.querySelector('.version');
+  if (footer) footer.textContent = `NoopFlow ${v}`;
+}
+
 async function init() {
   bind();
+  showVersion();
   if (!MOCK) {
     await T.event.listen('core', (e) => onCore(e.payload));
     await T.event.listen('close-requested', onCloseRequested);

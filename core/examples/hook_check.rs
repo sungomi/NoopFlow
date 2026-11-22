@@ -123,6 +123,27 @@ fn main() {
         format!("{got:?} shift_up_on_windows={shift_released_locally}"),
     );
 
+    // 5) This PC as the *target* (a Mac controls it): keys injected by NoopFlow must
+    //    reach Windows and must not be re-captured by our own hook.
+    platform::debug_set_grabbing(false);
+    while rx.try_recv().is_ok() {}
+    platform::inject_key(hid::RSHIFT, true);
+    std::thread::sleep(Duration::from_millis(80));
+    let down_seen = unsafe { (GetAsyncKeyState(0xA1) as u16) & 0x8000 != 0 };
+    platform::inject_key(hid::RSHIFT, false);
+    std::thread::sleep(Duration::from_millis(80));
+    let up_seen = unsafe { (GetAsyncKeyState(0xA1) as u16) & 0x8000 == 0 };
+    platform::inject_key(hid::LCTRL, true);
+    std::thread::sleep(Duration::from_millis(80));
+    let ctrl_seen = unsafe { (GetAsyncKeyState(0xA2) as u16) & 0x8000 != 0 };
+    platform::inject_key(hid::LCTRL, false);
+    let recaptured = collect(&mut rx);
+    check(
+        "injected keys reach Windows (target side)",
+        down_seen && up_seen && ctrl_seen && recaptured.is_empty(),
+        format!("rshift_down={down_seen} rshift_up={up_seen} ctrl_down={ctrl_seen} recaptured={recaptured:?}"),
+    );
+
     platform::debug_set_grabbing(false);
     // Clean up the F13 that was left "down" on purpose in test 3.
     send(&[key(0x7C, 0x64, KEYEVENTF_KEYUP)]);
