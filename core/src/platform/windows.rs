@@ -2,14 +2,11 @@
 
 use std::mem::size_of;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-};
-use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows_sys::Win32::Foundation::{BOOL, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, MonitorFromPoint, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -26,48 +23,9 @@ const MAGIC: usize = 0x4E4F_4F50; // "NOOP"
 struct HookState {
     last: (i32, i32),
     park: (i32, i32),
-    /// Where to put the cursor when the grab ends (applied on the hook thread,
-    /// after any pending take_focus, so the two can't race).
-    ret: Option<(i32, i32)>,
 }
 
-static STATE: Mutex<HookState> = Mutex::new(HookState { last: (0, 0), park: (0, 0), ret: None });
-
-/// Modifiers that were physically held when a grab started: their key-up goes to
-/// Windows (so they don't stay stuck there) and their auto-repeat is swallowed.
-///
-/// Only Shift/Ctrl/Alt/Win, read live from the OS at switch time. Tracking every
-/// key ourselves went wrong: Korean 한/영 and 한자 keys send no key-up, and other
-/// hooks or elevated windows can hide key-ups, which left keys "held" forever and
-/// made their presses vanish on the other computer.
-static PASS_UP: Mutex<[bool; 256]> = Mutex::new([false; 256]);
-const MODIFIER_VKS: [u16; 8] = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
-
-/// Test hook: enter/leave the "controlling another computer" state without
-/// moving the cursor or touching window focus (used by examples/hook_check.rs).
-#[doc(hidden)]
-pub fn debug_set_grabbing(on: bool) {
-    if on {
-        *PASS_UP.lock().unwrap() = snapshot_held_modifiers();
-    }
-    SHARED.grabbing.store(on, Ordering::Relaxed);
-}
-
-fn snapshot_held_modifiers() -> [bool; 256] {
-    let mut held = [false; 256];
-    for vk in MODIFIER_VKS {
-        held[vk as usize] = unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 };
-    }
-    held
-}
-
-/// Invisible window that takes keyboard focus and hides the cursor while another
-/// computer is being controlled, and the window that had focus before.
-static CAPTURE: AtomicIsize = AtomicIsize::new(0);
-static PREV_FOREGROUND: AtomicIsize = AtomicIsize::new(0);
-const WM_NF_GRAB: u32 = WM_APP + 1;
-const WM_NF_UNGRAB: u32 = WM_APP + 2;
-const CAPTURE_SIZE: i32 = 32;
+static STATE: Mutex<HookState> = Mutex::new(HookState { last: (0, 0), park: (0, 0) });
 
 fn any_button_down() -> bool {
     unsafe {
@@ -77,119 +35,11 @@ fn any_button_down() -> bool {
     }
 }
 
-fn monitor_center(x: i32, y: i32) -> (i32, i32) {
-    unsafe {
-        let m = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
-        let mut mi: MONITORINFO = std::mem::zeroed();
-        mi.cbSize = size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(m, &mut mi) == 0 {
-            return (x, y);
-        }
-        let r = mi.rcMonitor;
-        ((r.left + r.right) / 2, (r.top + r.bottom) / 2)
-    }
-}
-
-/// SetForegroundWindow is refused for background processes unless we briefly
-/// attach to the current foreground thread's input.
-unsafe fn force_foreground(target: HWND) {
-    let fg = GetForegroundWindow();
-    let me = GetCurrentThreadId();
-    let fg_thread = if fg.is_null() { 0 } else { GetWindowThreadProcessId(fg, null_mut()) };
-    let attach = fg_thread != 0 && fg_thread != me;
-    if attach {
-        AttachThreadInput(me, fg_thread, 1);
-    }
-    SetForegroundWindow(target);
-    if attach {
-        AttachThreadInput(me, fg_thread, 0);
-    }
-}
-
-/// Runs on the hook thread right after a grab starts.
-unsafe fn take_focus(h: HWND) {
-    if !SHARED.grabbing.load(Ordering::Relaxed) {
-        return; // already released again
-    }
-    let (cx, cy) = {
-        let st = STATE.lock().unwrap();
-        monitor_center(st.park.0, st.park.1)
-    };
-    PREV_FOREGROUND.store(GetForegroundWindow() as isize, Ordering::Relaxed);
-    SetWindowPos(h, HWND_TOPMOST, cx - CAPTURE_SIZE / 2, cy - CAPTURE_SIZE / 2, CAPTURE_SIZE, CAPTURE_SIZE, SWP_SHOWWINDOW);
-    // Park in the middle of the monitor: deltas never get clipped at a screen
-    // edge, and the cursor sits over the capture window, which hides it.
-    STATE.lock().unwrap().park = (cx, cy);
-    SetCursorPos(cx, cy);
-    force_foreground(h);
-    SetCursor(null_mut());
-}
-
-unsafe fn give_back_focus(h: HWND) {
-    let ret = STATE.lock().unwrap().ret.take();
-    if let Some((x, y)) = ret {
-        SetCursorPos(x, y);
-    }
-    ShowWindow(h, SW_HIDE);
-    let prev = PREV_FOREGROUND.swap(0, Ordering::Relaxed) as HWND;
-    if !prev.is_null() && IsWindow(prev) != 0 {
-        force_foreground(prev);
-    }
-}
-
-unsafe extern "system" fn capture_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    match msg {
-        WM_SETCURSOR => {
-            SetCursor(null_mut());
-            1
-        }
-        WM_NF_GRAB => {
-            take_focus(h);
-            0
-        }
-        WM_NF_UNGRAB => {
-            give_back_focus(h);
-            0
-        }
-        _ => DefWindowProcW(h, msg, wp, lp),
-    }
-}
-
-unsafe fn create_capture_window() -> HWND {
-    let hinst = GetModuleHandleW(null());
-    let class: Vec<u16> = "NoopFlowCapture\0".encode_utf16().collect();
-    let wc = WNDCLASSW {
-        style: 0,
-        lpfnWndProc: Some(capture_proc),
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: null_mut(),
-        hCursor: null_mut(),
-        hbrBackground: null_mut(),
-        lpszMenuName: null(),
-        lpszClassName: class.as_ptr(),
-    };
-    RegisterClassW(&wc);
-    let h = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
-        class.as_ptr(),
-        class.as_ptr(),
-        WS_POPUP,
-        0,
-        0,
-        CAPTURE_SIZE,
-        CAPTURE_SIZE,
-        null_mut(),
-        null_mut(),
-        hinst,
-        null(),
-    );
-    if !h.is_null() {
-        // Alpha 1/255: invisible but still hit-testable, so it owns the cursor shape.
-        SetLayeredWindowAttributes(h, 0, 1, LWA_ALPHA);
-    }
-    h
+/// Test hook: enter/leave the "controlling another computer" state without
+/// moving the cursor (used by examples/hook_check.rs).
+#[doc(hidden)]
+pub fn debug_set_grabbing(on: bool) {
+    SHARED.grabbing.store(on, Ordering::Relaxed);
 }
 
 fn virtual_screen() -> Rect {
@@ -236,11 +86,9 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         let mut st = STATE.lock().unwrap();
         if grabbing {
             let (dx, dy) = (x - st.park.0, y - st.park.1);
-            if dx == 0 && dy == 0 {
-                // Our own SetCursorPos to the park point: let it through.
-                return CallNextHookEx(null_mut(), code, wp, lp);
+            if dx != 0 || dy != 0 {
+                emit(InputEvent::MouseMove { dx, dy });
             }
-            emit(InputEvent::MouseMove { dx, dy });
             return 1;
         }
         let (lx, ly) = st.last;
@@ -253,13 +101,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
                 let mut cur = POINT { x: 0, y: 0 };
                 GetCursorPos(&mut cur);
                 st.park = (cur.x, cur.y);
-                *PASS_UP.lock().unwrap() = snapshot_held_modifiers();
                 emit(InputEvent::EdgeExit { side, t });
-                let cap = CAPTURE.load(Ordering::Relaxed) as HWND;
-                if !cap.is_null() {
-                    // Do the focus/cursor work after this hook returns.
-                    PostMessageW(cap, WM_NF_GRAB, 0, 0);
-                }
                 return 1;
             }
         }
@@ -290,7 +132,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
 }
 
 unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if code < 0 {
+    if code < 0 || !SHARED.grabbing.load(Ordering::Relaxed) {
         return CallNextHookEx(null_mut(), code, wp, lp);
     }
     let info = &*(lp as *const KBDLLHOOKSTRUCT);
@@ -299,21 +141,6 @@ unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LR
     }
     let msg = wp as u32;
     let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-    if !SHARED.grabbing.load(Ordering::Relaxed) {
-        return CallNextHookEx(null_mut(), code, wp, lp);
-    }
-    let vk = (info.vkCode & 0xFF) as usize;
-    {
-        let mut pass = PASS_UP.lock().unwrap();
-        if pass[vk] {
-            // Modifier held since before the switch: release it here, swallow its auto-repeat.
-            if down {
-                return 1;
-            }
-            pass[vk] = false;
-            return CallNextHookEx(null_mut(), code, wp, lp);
-        }
-    }
     let ext = info.flags & LLKHF_EXTENDED != 0;
     // AltGr's fake LCtrl and the fake shifts around extended keys.
     if info.scanCode & 0x200 != 0 || keys::is_fake_shift(info.scanCode, ext) || info.vkCode == 0xFF {
@@ -335,7 +162,6 @@ pub(crate) fn start_impl() -> anyhow::Result<()> {
         let mut p = POINT { x: 0, y: 0 };
         GetCursorPos(&mut p);
         STATE.lock().unwrap().last = (p.x, p.y);
-        CAPTURE.store(create_capture_window() as isize, Ordering::Relaxed);
         let _ = ok_tx.send(!m.is_null() && !k.is_null());
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -361,18 +187,13 @@ pub fn ungrab(entry: Option<(Side, f32)>) {
             None => st.park,
         };
         st.last = p;
-        st.ret = Some(p);
         p
     };
-    SHARED.grabbing.store(false, Ordering::Relaxed);
     // Don't hold the lock here: the hook thread takes it on every mouse event.
     unsafe {
-        let cap = CAPTURE.load(Ordering::Relaxed) as HWND;
-        if cap.is_null() || PostMessageW(cap, WM_NF_UNGRAB, 0, 0) == 0 {
-            STATE.lock().unwrap().ret = None;
-            SetCursorPos(x, y);
-        }
+        SetCursorPos(x, y);
     }
+    SHARED.grabbing.store(false, Ordering::Relaxed);
 }
 
 fn send(inputs: &[INPUT]) {
