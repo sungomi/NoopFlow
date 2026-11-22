@@ -33,15 +33,33 @@ struct HookState {
 
 static STATE: Mutex<HookState> = Mutex::new(HookState { last: (0, 0), park: (0, 0), ret: None });
 
-/// Physical key state by virtual key, so keys held while switching screens can
-/// be released on Windows instead of their key-up going to the other computer.
-struct KeyState {
-    down: [bool; 256],
-    /// Keys that were down when the grab started: their key-up goes to Windows.
-    pass_up: [bool; 256],
+/// Modifiers that were physically held when a grab started: their key-up goes to
+/// Windows (so they don't stay stuck there) and their auto-repeat is swallowed.
+///
+/// Only Shift/Ctrl/Alt/Win, read live from the OS at switch time. Tracking every
+/// key ourselves went wrong: Korean 한/영 and 한자 keys send no key-up, and other
+/// hooks or elevated windows can hide key-ups, which left keys "held" forever and
+/// made their presses vanish on the other computer.
+static PASS_UP: Mutex<[bool; 256]> = Mutex::new([false; 256]);
+const MODIFIER_VKS: [u16; 8] = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
+
+/// Test hook: enter/leave the "controlling another computer" state without
+/// moving the cursor or touching window focus (used by examples/hook_check.rs).
+#[doc(hidden)]
+pub fn debug_set_grabbing(on: bool) {
+    if on {
+        *PASS_UP.lock().unwrap() = snapshot_held_modifiers();
+    }
+    SHARED.grabbing.store(on, Ordering::Relaxed);
 }
 
-static KEYS: Mutex<KeyState> = Mutex::new(KeyState { down: [false; 256], pass_up: [false; 256] });
+fn snapshot_held_modifiers() -> [bool; 256] {
+    let mut held = [false; 256];
+    for vk in MODIFIER_VKS {
+        held[vk as usize] = unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 };
+    }
+    held
+}
 
 /// Invisible window that takes keyboard focus and hides the cursor while another
 /// computer is being controlled, and the window that had focus before.
@@ -235,10 +253,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
                 let mut cur = POINT { x: 0, y: 0 };
                 GetCursorPos(&mut cur);
                 st.park = (cur.x, cur.y);
-                {
-                    let mut ks = KEYS.lock().unwrap();
-                    ks.pass_up = ks.down;
-                }
+                *PASS_UP.lock().unwrap() = snapshot_held_modifiers();
                 emit(InputEvent::EdgeExit { side, t });
                 let cap = CAPTURE.load(Ordering::Relaxed) as HWND;
                 if !cap.is_null() {
@@ -284,20 +299,18 @@ unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LR
     }
     let msg = wp as u32;
     let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+    if !SHARED.grabbing.load(Ordering::Relaxed) {
+        return CallNextHookEx(null_mut(), code, wp, lp);
+    }
     let vk = (info.vkCode & 0xFF) as usize;
     {
-        let mut ks = KEYS.lock().unwrap();
-        if !SHARED.grabbing.load(Ordering::Relaxed) {
-            ks.down[vk] = down;
-            return CallNextHookEx(null_mut(), code, wp, lp);
-        }
-        if ks.pass_up[vk] {
-            // Held since before the switch: release it here, swallow its auto-repeat.
+        let mut pass = PASS_UP.lock().unwrap();
+        if pass[vk] {
+            // Modifier held since before the switch: release it here, swallow its auto-repeat.
             if down {
                 return 1;
             }
-            ks.pass_up[vk] = false;
-            ks.down[vk] = false;
+            pass[vk] = false;
             return CallNextHookEx(null_mut(), code, wp, lp);
         }
     }
