@@ -138,3 +138,11 @@ ui/              화면 (HTML/CSS/JS)
 - **Mac이 조작하는 쪽일 때**: 맥 커서가 화면 가장자리에 멈춘 채로 보여요.
 - **화면 경계를 넘는 드래그앤드롭**: 아직 안 돼요. 카드에 끌어다 놓기나 복사→붙여넣기로 보내야 해요.
 - **Mac 코드 검증 범위**: Windows에서 타입 검사까지만 했어요. 실제 Mac에서는 아직 실행해 보지 않았어요.
+
+---
+
+## 제작자
+
+**sungomi** · [github.com/sungomi](https://github.com/sungomi)
+
+라이선스: [MIT License](LICENSE)

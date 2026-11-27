@@ -3,6 +3,7 @@ name = "noopflow"
 version = "0.3.0"
 edition = "2021"
 description = "NoopFlow - one keyboard and mouse for your Windows and Mac"
+authors = ["sungomi"]
 license = "MIT"
 
 [build-dependencies]
