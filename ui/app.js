@@ -442,7 +442,7 @@ function saveSetting(key, value) {
 }
 
 // ----------------------------------------------------------------- modal
-let modal = null; // { kind: 'input'|'code'|'confirm'|'done', ... }
+let modal = null; // { kind: 'input'|'code'|'confirm'|'done'|'quit', ... }
 let countdownTimer = null;
 
 function openModal(html, state) {
@@ -692,6 +692,7 @@ function renderAll() {
 function bind() {
   $$('.nav-item').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   $('#lockToggle').addEventListener('change', (e) => invoke('set_locked', { locked: e.target.checked }));
+  $('#quitBtn').addEventListener('click', confirmQuit);
   $('#autostartToggle').addEventListener('change', async (e) => {
     try {
       e.target.checked = await invoke('set_autostart', { enabled: e.target.checked });
@@ -791,28 +792,29 @@ function bind() {
 }
 
 // --------------------------------------------------- window close (Windows)
+// The X button minimizes to the tray unless the user chose "quit" in Settings.
 function onCloseRequested() {
-  const action = S?.settings?.close_action || 'ask';
-  if (action === 'tray') return invoke('hide_window');
-  if (action === 'quit') return invoke('quit_app');
+  if (S?.settings?.close_action === 'quit') return invoke('quit_app');
+  invoke('hide_window');
+}
+
+// --------------------------------------------------- quit button (sidebar)
+function confirmQuit() {
+  const isMac = S?.me?.os === 'mac';
   openModal(`
     <div class="modal-icon">${ICON.cursor}</div>
-    <h3>NoopFlow를 어떻게 할까요?</h3>
-    <p>트레이로 최소화하면 키보드·마우스 공유가 계속 동작해요.<br>종료하면 다른 컴퓨터와 연결이 끊겨요.</p>
-    <label class="remember"><input type="checkbox" id="closeRemember" /> 다음부터 묻지 않기</label>
+    <h3>NoopFlow를 종료할까요?</h3>
+    <p>종료하면 다른 컴퓨터와 키보드·마우스 공유가 끊겨요.<br>창만 닫으려면 X를 누르면 돼요. ${isMac ? '메뉴 막대' : '트레이'}에서 계속 동작해요.</p>
     <div class="actions">
-      <button class="btn ghost" data-close="cancel">취소</button>
-      <button class="btn danger" data-close="quit">종료</button>
-      <button class="btn primary" data-close="tray">최소화</button>
-    </div>`, { kind: 'close' });
+      <button class="btn ghost" data-quit="cancel">취소</button>
+      <button class="btn danger" data-quit="quit">종료</button>
+    </div>`, { kind: 'quit' });
 }
 
 $('#modal').addEventListener('click', (e) => {
-  const act = e.target.closest('[data-close]')?.dataset.close;
+  const act = e.target.closest('[data-quit]')?.dataset.quit;
   if (!act) return;
-  if (act !== 'cancel' && $('#closeRemember')?.checked) saveSetting('close_action', act);
   closeModal();
-  if (act === 'tray') invoke('hide_window');
   if (act === 'quit') invoke('quit_app');
 });
 
@@ -870,7 +872,7 @@ function mockInvoke(cmd, args) {
       active: 'mac',
       controlled_by: null,
       locked: false,
-      settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', key_layout: 'position', clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6, close_action: 'ask' },
+      settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', key_layout: 'position', clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6, close_action: 'tray' },
       // ?perm=install|access|input|restart previews the Mac permission banner.
       ...(() => {
         const q = new URLSearchParams(location.search).get('perm');

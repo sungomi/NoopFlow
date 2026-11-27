@@ -50,6 +50,10 @@
           </span>
           <span class="switch"><input type="checkbox" id="lockToggle" /><span class="track"></span></span>
         </label>
+        <button class="quit-btn" id="quitBtn" type="button" title="NoopFlow 완전히 종료">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+          <span>NoopFlow 종료</span>
+        </button>
       </div>
     </aside>
 
@@ -136,7 +140,6 @@
           <div class="row win-only-row">
             <div class="row-text"><span class="row-title">창을 닫을 때</span><span class="row-sub">NoopFlow는 켜져 있어야 키보드·마우스를 나눠 쓸 수 있어요.</span></div>
             <div class="segmented" data-setting="close_action">
-              <button data-value="ask">물어보기</button>
               <button data-value="tray">트레이로 최소화</button>
               <button data-value="quit">종료</button>
             </div>
@@ -228,7 +231,7 @@
           <div class="row"><div class="row-text"><span class="row-title">내 화면으로 바로 돌아오기</span></div><span class="kbd-group"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd><kbd>H</kbd></span></div>
           <div class="row"><div class="row-text"><span class="row-title">한/영 전환 (맥 키보드)</span></div><span class="kbd-group"><kbd>오른쪽 ⌘</kbd></span></div>
         </div>
-        <p class="version">NoopFlow 0.3.0</p>
+        <p class="version">NoopFlow 0.3.1</p>
       </section>
     </main>
   </div>

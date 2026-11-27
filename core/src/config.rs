@@ -26,7 +26,8 @@ pub struct Settings {
     pub receive_dir: Option<String>,
     /// Ignore screen edges this close (px) to a corner.
     pub corner_guard: i32,
-    /// Windows: what the window's close button does: "ask", "tray" or "quit".
+    /// Windows: what the window's close button does: "tray" (default) or "quit".
+    /// Older configs may hold "ask"; it is read as "tray".
     pub close_action: String,
 }
 
@@ -44,7 +45,7 @@ impl Default for Settings {
             mouse_speed: 1.0,
             receive_dir: None,
             corner_guard: 6,
-            close_action: "ask".into(),
+            close_action: "tray".into(),
         }
     }
 }
@@ -130,6 +131,10 @@ impl Config {
                 let _ = std::fs::write(&path, serde_json::to_string_pretty(&c).unwrap());
                 c
             });
+        // The close button used to ask by default; it now minimizes to the tray.
+        if cfg.settings.close_action != "quit" {
+            cfg.settings.close_action = "tray".into();
+        }
         if cfg.layout.cell(&cfg.id).is_none() {
             let x = cfg.layout.cells.iter().map(|c| c.x).min().unwrap_or(1) - 1;
             cfg.layout.cells.push(Cell { id: cfg.id.clone(), x, y: 0 });

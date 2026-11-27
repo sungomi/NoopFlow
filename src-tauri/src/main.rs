@@ -172,12 +172,17 @@ fn main() {
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
 
-            // Start with the system the first time; the user can turn it off in Settings or the tray.
+            // Start at login by default (Mac and Windows); the user can turn it off in Settings or the tray.
+            // The marker is written only once enabling worked, so a failed first try is retried next launch.
             let marker = dir.join("autostart.init");
             if !marker.exists() {
-                let _ = app.autolaunch().enable();
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::fs::write(&marker, b"1");
+                let al = app.autolaunch();
+                if al.enable().is_ok() && al.is_enabled().unwrap_or(false) {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(&marker, b"1");
+                } else {
+                    log::warn!("could not enable start at login; will retry next launch");
+                }
             }
 
             let status = MenuItem::with_id(app, "status", "연결된 기기 없음", false, None::<&str>)?;
@@ -267,7 +272,7 @@ fn main() {
                     // Mac convention: closing hides; the menu bar icon stays.
                     let _ = window.hide();
                 } else {
-                    // Windows: let the page ask "quit / minimize to tray / cancel" (or apply the saved choice).
+                    // Windows: minimize to the tray by default; the page applies the "quit" setting if chosen.
                     let _ = window.emit("close-requested", ());
                 }
             }
