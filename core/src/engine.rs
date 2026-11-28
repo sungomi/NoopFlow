@@ -636,6 +636,12 @@ impl Engine {
     // ------------------------------------------------------------- ticks
 
     fn on_tick(&mut self) {
+        if self.disc.is_none() {
+            if let Ok(d) = Discovery::bind(self.net.clone()) {
+                tokio::spawn(d.clone().run());
+                self.disc = Some(d);
+            }
+        }
         let before = self.seen.len();
         self.seen.retain(|_, s| s.at.elapsed() < Duration::from_secs(8));
         let mut changed = before != self.seen.len();
@@ -683,9 +689,19 @@ impl Engine {
     fn on_net(&mut self, ev: NetEvent) {
         match ev {
             NetEvent::Discovered { ann, addr } => {
-                let new = !self.seen.contains_key(&ann.id);
-                let renamed = self.seen.get(&ann.id).map_or(false, |s| s.ann.name != ann.name);
-                self.seen.insert(ann.id.clone(), Seen { ann, addr, at: Instant::now() });
+                let id = ann.id.clone();
+                let new = !self.seen.contains_key(&id);
+                let addr_changed = self.seen.get(&id).map_or(false, |s| s.addr != addr);
+                let renamed = self.seen.get(&id).map_or(false, |s| s.ann.name != ann.name);
+                self.seen.insert(id.clone(), Seen { ann, addr, at: Instant::now() });
+                // Immediately dial a newly discovered or IP-changed trusted peer.
+                if !self.peers.contains_key(&id) && self.cfg.trusted.iter().any(|t| t.id == id) {
+                    let ready = addr_changed || self.dialing.get(&id).map_or(true, |at| at.elapsed() > Duration::from_secs(3));
+                    if ready {
+                        self.dialing.insert(id.clone(), Instant::now());
+                        net::dial(self.net.clone(), SocketAddr::new(addr, net::TCP_PORT), None, Some(id));
+                    }
+                }
                 if new || renamed {
                     self.emit_state();
                 }

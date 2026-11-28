@@ -184,22 +184,28 @@ fn main() {
     let start_minimized = std::env::args().any(|a| a == MINIMIZED_ARG);
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == MINIMIZED_ARG) {
+                show_main(app);
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![MINIMIZED_ARG])))
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
 
             // Start at login by default (Mac and Windows); the user can turn it off in Settings or the tray.
-            // The marker is written only once enabling worked, so a failed first try is retried next launch.
+            // If already enabled, refresh the entry so path changes and `--minimized` always stay up to date.
             let marker = dir.join("autostart.init");
+            let al = app.autolaunch();
             if !marker.exists() {
-                let al = app.autolaunch();
                 if al.enable().is_ok() && al.is_enabled().unwrap_or(false) {
                     let _ = std::fs::create_dir_all(&dir);
                     let _ = std::fs::write(&marker, b"1");
                 } else {
                     log::warn!("could not enable start at login; will retry next launch");
                 }
+            } else if al.is_enabled().unwrap_or(false) {
+                let _ = al.enable();
             }
 
             let status = MenuItem::with_id(app, "status", "연결된 기기 없음", false, None::<&str>)?;

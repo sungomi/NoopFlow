@@ -311,7 +311,15 @@ pub async fn listen(ctx: Arc<NetCtx>) -> Result<()> {
 }
 
 pub async fn listen_on(ctx: Arc<NetCtx>, port: u16) -> Result<()> {
-    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await.context("TCP port in use")?;
+    let listener = loop {
+        match TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
+            Ok(l) => break l,
+            Err(e) => {
+                log::warn!("TCP port {port} bind failed ({e}), retrying in 2s...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    };
     loop {
         let (stream, _) = listener.accept().await?;
         let ctx = ctx.clone();
@@ -416,9 +424,24 @@ impl Discovery {
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    let dg = Datagram::Announce { app: APP_TAG.into(), a: self.me() };
+                    let me = self.me();
+                    let dg = Datagram::Announce { app: APP_TAG.into(), a: me.clone() };
                     for t in Self::broadcast_targets() {
                         self.send(&dg, t).await;
+                    }
+                    // Also send unicast Probes to trusted peers' last known IPs in case
+                    // the router/Wi-Fi drops UDP broadcasts.
+                    let probe_ips: Vec<IpAddr> = self
+                        .ctx
+                        .trusted
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|t| t.last_addr.as_deref().and_then(|a| a.parse::<IpAddr>().ok()))
+                        .collect();
+                    let probe = Datagram::Probe { app: APP_TAG.into(), a: me };
+                    for ip in probe_ips {
+                        self.send(&probe, SocketAddr::new(ip, UDP_PORT)).await;
                     }
                 }
                 r = self.sock.recv_from(&mut buf) => {
