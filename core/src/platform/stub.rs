@@ -11,6 +11,7 @@ pub fn screens() -> Vec<Rect> {
 pub fn ungrab(_entry: Option<(Side, f32)>) {
     super::SHARED.grabbing.store(false, std::sync::atomic::Ordering::Relaxed);
 }
+pub fn on_enter(_x: f64, _y: f64) {}
 pub fn inject_move(_x: f64, _y: f64, _dx: i32, _dy: i32) {}
 pub fn inject_button(_b: Button, _down: bool, _x: f64, _y: f64) {}
 pub fn inject_wheel(_dx: i32, _dy: i32) {}

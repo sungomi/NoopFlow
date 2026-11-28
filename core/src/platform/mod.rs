@@ -22,6 +22,8 @@ pub enum InputEvent {
     LocalKey { code: u16, down: bool },
     /// Mouse click observed while not grabbing (only when observing is enabled).
     LocalClick,
+    /// OS took over input (e.g. Windows UAC / Secure Desktop) while grabbing.
+    GrabLost,
     Permission(bool),
 }
 

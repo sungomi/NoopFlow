@@ -157,7 +157,19 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         let (x, y) = (info.pt.x, info.pt.y);
         let mut st = STATE.lock().unwrap();
         if grabbing {
-            let (dx, dy) = (x - st.park.0, y - st.park.1);
+            let mut cur = POINT { x: 0, y: 0 };
+            GetCursorPos(&mut cur);
+            // If UAC / Secure Desktop / another elevated window moved the real cursor
+            // away from `st.park`, release the grab cleanly instead of sending huge
+            // repeated deltas that pin the remote cursor into a corner.
+            if (cur.x - st.park.0).abs() > 8 || (cur.y - st.park.1).abs() > 8 {
+                SHARED.grabbing.store(false, Ordering::Relaxed);
+                st.last = (cur.x, cur.y);
+                emit(InputEvent::GrabLost);
+                return CallNextHookEx(null_mut(), code, wp, lp);
+            }
+            st.park = (cur.x, cur.y);
+            let (dx, dy) = (x - cur.x, y - cur.y);
             if dx != 0 || dy != 0 {
                 emit(InputEvent::MouseMove { dx, dy });
             }
@@ -209,6 +221,17 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
 unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code < 0 || !SHARED.grabbing.load(Ordering::Relaxed) {
         return CallNextHookEx(null_mut(), code, wp, lp);
+    }
+    {
+        let mut cur = POINT { x: 0, y: 0 };
+        GetCursorPos(&mut cur);
+        let mut st = STATE.lock().unwrap();
+        if (cur.x - st.park.0).abs() > 8 || (cur.y - st.park.1).abs() > 8 {
+            SHARED.grabbing.store(false, Ordering::Relaxed);
+            st.last = (cur.x, cur.y);
+            emit(InputEvent::GrabLost);
+            return CallNextHookEx(null_mut(), code, wp, lp);
+        }
     }
     let info = &*(lp as *const KBDLLHOOKSTRUCT);
     if info.dwExtraInfo == MAGIC {
@@ -300,6 +323,10 @@ fn key(vk: u16, scan: u16, flags: u32) -> INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: MAGIC } },
     }
+}
+
+pub fn on_enter(x: f64, y: f64) {
+    inject_move(x, y, 0, 0);
 }
 
 pub fn inject_move(x: f64, y: f64, _dx: i32, _dy: i32) {

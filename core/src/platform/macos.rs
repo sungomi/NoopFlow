@@ -61,6 +61,7 @@ extern "C" {
     fn CGEventPost(tap: u32, e: CGEventRef);
     fn CGEventSourceCreate(state: i32) -> CGEventSourceRef;
     fn CGAssociateMouseAndMouseCursorPosition(connected: i32) -> i32;
+    fn CGWarpMouseCursorPosition(new_cursor_position: CGPoint) -> i32;
     fn CGDisplayHideCursor(display: u32) -> i32;
     fn CGDisplayShowCursor(display: u32) -> i32;
     fn CGMainDisplayID() -> u32;
@@ -553,6 +554,16 @@ pub fn ungrab(entry: Option<(Side, f32)>) {
         }
     }
     SHARED.grabbing.store(false, Ordering::Relaxed);
+}
+
+pub fn on_enter(x: f64, y: f64) {
+    unsafe {
+        CGAssociateMouseAndMouseCursorPosition(1);
+        CGDisplayShowCursor(CGMainDisplayID());
+        CGWarpMouseCursorPosition(CGPoint { x, y });
+    }
+    // Non-zero delta wakes macOS cursors hidden by fullscreen apps (setHiddenUntilMouseMoves).
+    inject_move(x, y, 1, 0);
 }
 
 pub fn inject_move(x: f64, y: f64, dx: i32, dy: i32) {

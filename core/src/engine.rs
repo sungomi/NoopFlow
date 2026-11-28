@@ -860,7 +860,7 @@ impl Engine {
                 self.target_scale = platform::scale_at(self.vpos.0, self.vpos.1);
                 self.frac = (0.0, 0.0);
                 self.ralt.reset();
-                platform::inject_move(self.vpos.0, self.vpos.1, 0, 0);
+                platform::on_enter(self.vpos.0, self.vpos.1);
                 self.diag.enters += 1;
                 self.diag.last_controller = Some(self.peer_name(from));
                 // The OS silently drops injected input without Accessibility; say so instead.
@@ -1185,6 +1185,15 @@ impl Engine {
                 }
             }
             InputEvent::LocalClick => self.local_rcmd = None,
+            InputEvent::GrabLost => {
+                if matches!(self.mode, Mode::Controlling(_)) {
+                    self.forward(Msg::Leave);
+                    self.mode = Mode::Local;
+                    self.fwd_down.clear();
+                    self.rcmd.reset();
+                    self.emit_state();
+                }
+            }
         }
     }
 
@@ -1209,8 +1218,8 @@ impl Engine {
         let shift = held(hid::LSHIFT, hid::RSHIFT);
         let gui = held(hid::LGUI, hid::RGUI);
 
-        // Ctrl+Alt+Shift+H: come back to this computer.
-        if down && code == hid::H && ctrl && alt && shift {
+        // Pause or Ctrl+Alt+Shift+H: come back to this computer.
+        if down && (code == hid::PAUSE || (code == hid::H && ctrl && alt && shift)) {
             self.leave_to_local(None);
             return;
         }
