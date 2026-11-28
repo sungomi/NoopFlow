@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use noopflow_core::{Cell, Cmd, CoreEvent, CoreHandle, Settings, Snapshot};
@@ -98,6 +99,7 @@ fn clip_push(core: State<CoreHandle>, id: String) {
 /// macOS applies newly granted privacy permissions only to a fresh process.
 #[tauri::command]
 fn restart_app(app: AppHandle) {
+    ALLOW_EXIT.store(true, Ordering::SeqCst);
     app.restart();
 }
 
@@ -118,20 +120,35 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     Ok(on)
 }
 
-/// Hide to the tray / menu bar; sharing keeps running.
-#[tauri::command]
-fn hide_window(app: AppHandle) {
+static ALLOW_EXIT: AtomicBool = AtomicBool::new(false);
+
+fn exit_now(app: &AppHandle) {
+    ALLOW_EXIT.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+fn hide_to_tray(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+}
+
+/// Hide to the tray / menu bar; sharing keeps running.
+#[tauri::command]
+fn hide_window(app: AppHandle) {
+    hide_to_tray(&app);
 }
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
-    app.exit(0);
+    exit_now(&app);
 }
 
 fn show_main(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -247,7 +264,7 @@ fn main() {
                     }
                     let _ = app.emit("autostart", now);
                 }
-                "quit" => app.exit(0),
+                "quit" => exit_now(app),
                 _ => {}
             })
             .on_tray_icon_event(|tray, event| {
@@ -260,7 +277,10 @@ fn main() {
             })
             .build(app)?;
 
-            if !start_minimized {
+            if start_minimized {
+                #[cfg(target_os = "macos")]
+                let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
+            } else {
                 show_main(app.handle());
             }
             Ok(())
@@ -269,8 +289,8 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if cfg!(target_os = "macos") {
-                    // Mac convention: closing hides; the menu bar icon stays.
-                    let _ = window.hide();
+                    // Mac: hide window and remove from Dock; menu bar icon stays active.
+                    hide_to_tray(window.app_handle());
                 } else {
                     // Windows: minimize to the tray by default; the page applies the "quit" setting if chosen.
                     let _ = window.emit("close-requested", ());
@@ -306,8 +326,15 @@ fn main() {
 
     app.run(|_app, _event| {
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen { .. } = _event {
-            show_main(_app);
+        match _event {
+            tauri::RunEvent::Reopen { .. } => show_main(_app),
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if !ALLOW_EXIT.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    hide_to_tray(_app);
+                }
+            }
+            _ => {}
         }
     });
 }
