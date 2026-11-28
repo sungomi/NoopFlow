@@ -427,6 +427,9 @@ function diagItems() {
   items.push(['받은 커서 진입', `${d.enters || 0}회${d.last_controller ? ` · ${d.last_controller}` : ''}`, '']);
   items.push(['받은 커서 이동', `${d.moves_in || 0}회`, '']);
   items.push(['보낸 커서 이동', `${d.moves_out || 0}회`, '']);
+  items.push(['받은 키 입력', `${d.keys_in || 0}회`, '']);
+  items.push(['보낸 키 입력', `${d.keys_out || 0}회`, '']);
+  if (d.last_key) items.push(['마지막 키', d.last_key, '']);
   return items;
 }
 

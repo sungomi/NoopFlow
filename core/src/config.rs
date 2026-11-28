@@ -26,6 +26,8 @@ pub struct Settings {
     pub receive_dir: Option<String>,
     /// Ignore screen edges this close (px) to a corner.
     pub corner_guard: i32,
+    /// Mac: map plain F1/F2/F7..F12 from another keyboard to Mac brightness/media controls.
+    pub mac_fn_media: bool,
     /// Windows: what the window's close button does: "tray" (default) or "quit".
     /// Older configs may hold "ask"; it is read as "tray".
     pub close_action: String,
@@ -45,6 +47,7 @@ impl Default for Settings {
             mouse_speed: 1.0,
             receive_dir: None,
             corner_guard: 6,
+            mac_fn_media: false,
             close_action: "tray".into(),
         }
     }

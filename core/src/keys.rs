@@ -25,6 +25,8 @@ pub mod hid {
     pub const MEDIA_NEXT: u16 = 0x101;
     pub const MEDIA_PREV: u16 = 0x102;
     pub const MEDIA_STOP: u16 = 0x103;
+    pub const BRIGHTNESS_UP: u16 = 0x104;
+    pub const BRIGHTNESS_DOWN: u16 = 0x105;
     pub const LCTRL: u16 = 0xE0;
     pub const LSHIFT: u16 = 0xE1;
     pub const LALT: u16 = 0xE2;
@@ -292,7 +294,42 @@ const MAC_TABLE: &[(u16, Hid)] = &[
 ];
 
 pub fn is_media(code: Hid) -> bool {
-    matches!(code, hid::MUTE | hid::VOLUME_UP | hid::VOLUME_DOWN) || (0x100..=0x103).contains(&code)
+    matches!(code, hid::MUTE | hid::VOLUME_UP | hid::VOLUME_DOWN) || (0x100..=0x105).contains(&code)
+}
+
+/// Optionally map plain F1/F2/F7..F12 to Mac top-row brightness/media controls.
+pub fn mac_fn_as_media(code: Hid) -> Hid {
+    match code {
+        0x3A => hid::BRIGHTNESS_DOWN, // F1
+        0x3B => hid::BRIGHTNESS_UP,   // F2
+        0x40 => hid::MEDIA_PREV,      // F7
+        0x41 => hid::MEDIA_PLAY_PAUSE,// F8
+        0x42 => hid::MEDIA_NEXT,      // F9
+        0x43 => hid::MUTE,            // F10
+        0x44 => hid::VOLUME_DOWN,     // F11
+        0x45 => hid::VOLUME_UP,       // F12
+        other => other,
+    }
+}
+
+/// Short human-readable label for a HID code (shown in Settings -> 진단).
+pub fn label(code: Hid) -> String {
+    match code {
+        0x29 => "Esc (0x29)".into(),
+        0x3A..=0x45 => format!("F{} ({code:#04x})", code - 0x3A + 1),
+        0x68..=0x6F => format!("F{} ({code:#04x})", code - 0x68 + 13),
+        hid::LANG1 => "한/영 (0x90)".into(),
+        hid::LANG2 => "한자 (0x91)".into(),
+        hid::MUTE => "Mute".into(),
+        hid::VOLUME_UP => "Vol+".into(),
+        hid::VOLUME_DOWN => "Vol-".into(),
+        hid::MEDIA_PLAY_PAUSE => "Play/Pause".into(),
+        hid::MEDIA_NEXT => "Next".into(),
+        hid::MEDIA_PREV => "Prev".into(),
+        hid::BRIGHTNESS_UP => "Bright+".into(),
+        hid::BRIGHTNESS_DOWN => "Bright-".into(),
+        _ => format!("{code:#04x}"),
+    }
 }
 
 /// macOS "NX" auxiliary key types (sent as system-defined events, not key events).
@@ -300,6 +337,8 @@ pub fn to_mac_media(code: Hid) -> Option<i64> {
     Some(match code {
         hid::VOLUME_UP => 0,
         hid::VOLUME_DOWN => 1,
+        hid::BRIGHTNESS_UP => 2,
+        hid::BRIGHTNESS_DOWN => 3,
         hid::MUTE => 7,
         hid::MEDIA_PLAY_PAUSE | hid::MEDIA_STOP => 16,
         hid::MEDIA_NEXT => 17,

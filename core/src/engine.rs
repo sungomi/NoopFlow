@@ -53,6 +53,12 @@ pub struct Diag {
     pub moves_in: u64,
     /// Cursor moves sent while controlling another computer.
     pub moves_out: u64,
+    /// Key events received from another computer.
+    pub keys_in: u64,
+    /// Key events sent while controlling another computer.
+    pub keys_out: u64,
+    /// Last key pressed (received or sent), for quick troubleshooting.
+    pub last_key: Option<String>,
     pub last_controller: Option<String>,
 }
 
@@ -998,6 +1004,10 @@ impl Engine {
     }
 
     fn target_key(&mut self, from: &str, code: u16, down: bool) {
+        self.diag.keys_in += 1;
+        if down {
+            self.diag.last_key = Some(keys::label(code));
+        }
         let ctrl_os = self.peers.get(from).map(|p| p.hello.os).unwrap_or(self.os);
         self.key_map = if ctrl_os != self.os && (ctrl_os == Os::Mac || self.os == Os::Mac) {
             self.cfg.settings.key_layout.clone()
@@ -1010,6 +1020,13 @@ impl Engine {
                     platform::toggle_input_source(&self.cfg.settings.hangul_method);
                 }
                 return;
+            }
+            if self.cfg.settings.mac_fn_media && self.held_keys.iter().all(|c| !keys::is_modifier(*c)) {
+                let mapped = keys::mac_fn_as_media(code);
+                if mapped != code {
+                    platform::inject_key(mapped, down);
+                    return;
+                }
             }
             // Tap detection works on the physical key (right Alt), before remapping.
             if self.cfg.settings.right_alt_hangul {
@@ -1173,6 +1190,10 @@ impl Engine {
     fn controller_key(&mut self, code: u16, down: bool) {
         if self.target().is_none() {
             return;
+        }
+        self.diag.keys_out += 1;
+        if down {
+            self.diag.last_key = Some(keys::label(code));
         }
         if down {
             if !self.fwd_down.contains(&code) {
