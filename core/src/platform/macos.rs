@@ -517,8 +517,7 @@ static INJ: Mutex<Injector> = Mutex::new(Injector { src: 0, mods: 0, caps: false
 impl Injector {
     fn source(&mut self) -> CGEventSourceRef {
         if self.src == 0 {
-            // Private state (-1) isolates synthetic events from local physical keyboard modifiers.
-            self.src = unsafe { CGEventSourceCreate(-1) } as usize;
+            self.src = unsafe { CGEventSourceCreate(1) } as usize; // HID system state
         }
         self.src as CGEventSourceRef
     }
