@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use noopflow_core::{Cell, Cmd, CoreEvent, CoreHandle, Settings, Snapshot};
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -277,6 +277,58 @@ fn main() {
             })
             .build(app)?;
 
+            let app_menu_ok = || -> tauri::Result<()> {
+                #[cfg(target_os = "macos")]
+                {
+                    // Replace macOS default Cmd+Q (which calls NSApplication.terminate: directly)
+                    // with a menu item that hides to the menu bar instead of killing the app.
+                    let hide_cmd_q = MenuItem::with_id(app, "hide_app", "메뉴 막대로 숨기기", true, Some("CmdOrCtrl+Q"))?;
+                    let real_quit = MenuItem::with_id(app, "app_quit", "NoopFlow 완전 종료", true, None::<&str>)?;
+                    let app_sub = Submenu::with_items(
+                        app,
+                        "NoopFlow",
+                        true,
+                        &[
+                            &PredefinedMenuItem::about(app, None, None)?,
+                            &PredefinedMenuItem::separator(app)?,
+                            &PredefinedMenuItem::hide(app, None)?,
+                            &PredefinedMenuItem::hide_others(app, None)?,
+                            &PredefinedMenuItem::show_all(app, None)?,
+                            &PredefinedMenuItem::separator(app)?,
+                            &hide_cmd_q,
+                            &real_quit,
+                        ],
+                    )?;
+                    let edit_sub = Submenu::with_items(
+                        app,
+                        "편집",
+                        true,
+                        &[
+                            &PredefinedMenuItem::undo(app, None)?,
+                            &PredefinedMenuItem::redo(app, None)?,
+                            &PredefinedMenuItem::separator(app)?,
+                            &PredefinedMenuItem::cut(app, None)?,
+                            &PredefinedMenuItem::copy(app, None)?,
+                            &PredefinedMenuItem::paste(app, None)?,
+                            &PredefinedMenuItem::select_all(app, None)?,
+                        ],
+                    )?;
+                    let win_sub = Submenu::with_items(
+                        app,
+                        "윈도우",
+                        true,
+                        &[
+                            &PredefinedMenuItem::minimize(app, None)?,
+                            &PredefinedMenuItem::close_window(app, None)?,
+                        ],
+                    )?;
+                    let bar = Menu::with_items(app, &[&app_sub, &edit_sub, &win_sub])?;
+                    app.set_menu(bar)?;
+                }
+                Ok(())
+            };
+            app_menu_ok()?;
+
             if start_minimized {
                 #[cfg(target_os = "macos")]
                 let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -284,6 +336,11 @@ fn main() {
                 show_main(app.handle());
             }
             Ok(())
+        })
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "hide_app" => hide_to_tray(app),
+            "app_quit" => exit_now(app),
+            _ => {}
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
