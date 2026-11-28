@@ -122,15 +122,18 @@ impl Config {
 
     pub fn load_or_create(dir: &Path) -> Config {
         let path = dir.join("config.json");
-        let mut cfg = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Config>(&s).ok())
-            .unwrap_or_else(|| {
-                let c = Config::fresh();
-                let _ = std::fs::create_dir_all(dir);
-                let _ = std::fs::write(&path, serde_json::to_string_pretty(&c).unwrap());
-                c
-            });
+        let backup = dir.join("config.json.bak");
+        let load = |p: &Path| {
+            std::fs::read_to_string(p)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Config>(&s).ok())
+        };
+        let mut cfg = load(&path).or_else(|| load(&backup)).unwrap_or_else(|| {
+            let c = Config::fresh();
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(&path, serde_json::to_string_pretty(&c).unwrap());
+            c
+        });
         // The close button used to ask by default; it now minimizes to the tray.
         if cfg.settings.close_action != "quit" {
             cfg.settings.close_action = "tray".into();
@@ -144,9 +147,18 @@ impl Config {
 
     pub fn save(&self, dir: &Path) {
         let _ = std::fs::create_dir_all(dir);
+        let json = serde_json::to_string_pretty(self).unwrap();
+        let path = dir.join("config.json");
         let tmp = dir.join("config.json.tmp");
-        if std::fs::write(&tmp, serde_json::to_string_pretty(self).unwrap()).is_ok() {
-            let _ = std::fs::rename(&tmp, dir.join("config.json"));
+        let backup = dir.join("config.json.bak");
+        if path.exists() {
+            let _ = std::fs::copy(&path, &backup);
+        }
+        if std::fs::write(&tmp, &json).is_ok() {
+            if std::fs::rename(&tmp, &path).is_err() {
+                let _ = std::fs::write(&path, &json);
+                let _ = std::fs::remove_file(&tmp);
+            }
         }
     }
 

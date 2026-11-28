@@ -338,6 +338,46 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+/// Remove stale offline duplicate entries representing the same device (e.g.
+/// after a reinstall/re-pair changed its id/keypair) and inherit its layout cell.
+fn dedupe_trusted_cfg(
+    cfg: &mut Config,
+    is_live: impl Fn(&str) -> bool,
+    id: &str,
+    name: &str,
+    os: Os,
+    ip: &str,
+    paired: bool,
+) -> Vec<String> {
+    let stale: Vec<String> = cfg
+        .trusted
+        .iter()
+        .filter(|t| t.id != id && !is_live(&t.id) && t.os == os)
+        .filter(|t| {
+            let same_name = t.name == name;
+            let same_ip = t.last_addr.as_deref() == Some(ip);
+            if paired {
+                same_name || same_ip
+            } else {
+                same_name && same_ip
+            }
+        })
+        .map(|t| t.id.clone())
+        .collect();
+    if stale.is_empty() {
+        return stale;
+    }
+    cfg.trusted.retain(|t| !stale.contains(&t.id));
+    if cfg.layout.cell(id).is_none() {
+        if let Some((x, y)) = cfg.layout.cells.iter().find(|c| stale.contains(&c.id)).map(|c| (c.x, c.y)) {
+            cfg.layout.cells.push(Cell { id: id.to_string(), x, y });
+        }
+    }
+    cfg.layout.cells.retain(|c| !stale.contains(&c.id));
+    cfg.layout.version = now_ms().max(cfg.layout.version + 1);
+    stale
+}
+
 impl Engine {
     fn new(dir: PathBuf, sink: Sink) -> Result<(Engine, Chans)> {
         let cfg = Config::load_or_create(&dir);
@@ -705,14 +745,16 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     fn on_connected(&mut self, conn: u64, hello: HelloInfo, addr: SocketAddr, initiator_id: String, public_key: Vec<u8>, paired: bool, link: PeerLink) {
         let id = hello.id.clone();
+        let ip_str = addr.ip().to_string();
         let key = hex(&public_key);
         let mut dirty = false;
+        let mut layout_changed = false;
         match self.cfg.trusted.iter_mut().find(|t| t.id == id) {
             Some(t) => {
-                if t.name != hello.name || t.last_addr.as_deref() != Some(&addr.ip().to_string()) || (paired && t.public_key != key) {
+                if t.name != hello.name || t.last_addr.as_deref() != Some(ip_str.as_str()) || (paired && t.public_key != key) {
                     t.name = hello.name.clone();
                     t.os = hello.os;
-                    t.last_addr = Some(addr.ip().to_string());
+                    t.last_addr = Some(ip_str.clone());
                     if paired {
                         t.public_key = key.clone();
                     }
@@ -720,14 +762,32 @@ impl Engine {
                 }
             }
             None if paired => {
-                self.cfg.trusted.push(TrustedPeer { id: id.clone(), name: hello.name.clone(), os: hello.os, public_key: key.clone(), last_addr: Some(addr.ip().to_string()) });
+                self.cfg.trusted.push(TrustedPeer { id: id.clone(), name: hello.name.clone(), os: hello.os, public_key: key.clone(), last_addr: Some(ip_str.clone()) });
                 dirty = true;
             }
             None => return, // not trusted (should not happen)
         }
+        let stale = dedupe_trusted_cfg(
+            &mut self.cfg,
+            |other| self.peers.contains_key(other) || self.seen.contains_key(other),
+            &id,
+            &hello.name,
+            hello.os,
+            &ip_str,
+            paired,
+        );
+        if !stale.is_empty() {
+            for s in &stale {
+                self.dialing.remove(s);
+                self.peer_clips.remove(s);
+            }
+            dirty = true;
+            layout_changed = true;
+        }
         if paired {
             if self.ensure_in_layout(&id) {
                 dirty = true;
+                layout_changed = true;
             }
             self.net.clear_pair_code();
             self.emit(CoreEvent::PairCodeClosed);
@@ -755,6 +815,9 @@ impl Engine {
             self.toast("ok", format!("{} 연결됨", peer.hello.name));
         }
         self.peers.insert(id, peer);
+        if layout_changed {
+            self.broadcast_layout();
+        }
         self.refresh_neighbors();
         self.emit_state();
     }
@@ -1404,5 +1467,59 @@ mod tests {
         assert_eq!(l.neighbor("b", Side::Left), Some("a"));
         assert_eq!(l.neighbor("a", Side::Bottom), Some("c"));
         assert_eq!(l.neighbor("a", Side::Left), None);
+    }
+
+    fn test_cfg(trusted: Vec<TrustedPeer>, cells: Vec<Cell>) -> Config {
+        Config {
+            id: "me".into(),
+            name: "Mac".into(),
+            private_key: String::new(),
+            public_key: String::new(),
+            trusted,
+            layout: Layout { version: 1, cells },
+            settings: Settings::default(),
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn dedupe_replaces_stale_device_on_repair_and_inherits_cell() {
+        let mut cfg = test_cfg(
+            vec![
+                TrustedPeer { id: "old".into(), name: "JEHEELY_".into(), os: Os::Windows, public_key: "k1".into(), last_addr: Some("192.168.0.10".into()) },
+                TrustedPeer { id: "new".into(), name: "JEHEELY_".into(), os: Os::Windows, public_key: "k2".into(), last_addr: Some("192.168.0.10".into()) },
+            ],
+            vec![Cell { id: "me".into(), x: 1, y: 0 }, Cell { id: "old".into(), x: 0, y: 0 }],
+        );
+        let removed = dedupe_trusted_cfg(&mut cfg, |_| false, "new", "JEHEELY_", Os::Windows, "192.168.0.10", true);
+        assert_eq!(removed, vec!["old".to_string()]);
+        assert_eq!(cfg.trusted.len(), 1);
+        assert_eq!(cfg.trusted[0].id, "new");
+        assert_eq!(cfg.layout.cell("new"), Some(&Cell { id: "new".into(), x: 0, y: 0 }));
+        assert!(cfg.layout.cell("old").is_none());
+    }
+
+    #[test]
+    fn dedupe_auto_heals_existing_duplicate_on_reconnect() {
+        let mut cfg = test_cfg(
+            vec![
+                TrustedPeer { id: "old".into(), name: "JEHEELY_".into(), os: Os::Windows, public_key: "k1".into(), last_addr: Some("192.168.0.10".into()) },
+                TrustedPeer { id: "cur".into(), name: "JEHEELY_".into(), os: Os::Windows, public_key: "k2".into(), last_addr: Some("192.168.0.10".into()) },
+                // Different IP with the same name must not be removed on plain reconnect.
+                TrustedPeer { id: "other".into(), name: "JEHEELY_".into(), os: Os::Windows, public_key: "k3".into(), last_addr: Some("192.168.0.99".into()) },
+            ],
+            vec![
+                Cell { id: "me".into(), x: 1, y: 1 },
+                Cell { id: "old".into(), x: 1, y: 0 },
+                Cell { id: "cur".into(), x: 0, y: 0 },
+                Cell { id: "other".into(), x: 2, y: 0 },
+            ],
+        );
+        let removed = dedupe_trusted_cfg(&mut cfg, |_| false, "cur", "JEHEELY_", Os::Windows, "192.168.0.10", false);
+        assert_eq!(removed, vec!["old".to_string()]);
+        assert_eq!(cfg.trusted.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["cur", "other"]);
+        assert!(cfg.layout.cell("old").is_none());
+        assert!(cfg.layout.cell("cur").is_some());
+        assert!(cfg.layout.cell("other").is_some());
     }
 }

@@ -517,7 +517,8 @@ static INJ: Mutex<Injector> = Mutex::new(Injector { src: 0, mods: 0, caps: false
 impl Injector {
     fn source(&mut self) -> CGEventSourceRef {
         if self.src == 0 {
-            self.src = unsafe { CGEventSourceCreate(1) } as usize; // HID system state
+            // Private state (-1) isolates synthetic events from local physical keyboard modifiers.
+            self.src = unsafe { CGEventSourceCreate(-1) } as usize;
         }
         self.src as CGEventSourceRef
     }
@@ -673,9 +674,9 @@ pub fn inject_key(code: u16, down: bool) {
             return;
         }
         let extra = match code {
-            0x4F..=0x52 => FLAG_NUMPAD | FLAG_FN,     // arrows
-            0x49..=0x4E | 0x3A..=0x45 => FLAG_FN,      // nav cluster, F-keys
-            0x54..=0x63 | 0x67 => FLAG_NUMPAD,          // keypad
+            0x4F..=0x52 => FLAG_NUMPAD | FLAG_FN,                  // arrows
+            0x49..=0x4E | 0x3A..=0x45 | 0x68..=0x6F => FLAG_FN,    // nav cluster, F1..F20
+            0x54..=0x63 | 0x67 => FLAG_NUMPAD,                      // keypad
             _ => 0,
         };
         let ev = CGEventCreateKeyboardEvent(inj.source(), kc, down);

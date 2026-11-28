@@ -143,9 +143,14 @@ const WIN_TABLE: &[(u16, bool, Hid)] = &[
 ];
 
 const VK_PAUSE: u32 = 0x13;
+const VK_ESCAPE: u32 = 0x1B;
 const VK_NUMLOCK: u32 = 0x90;
 const VK_HANGUL: u32 = 0x15;
 const VK_HANJA: u32 = 0x19;
+const VK_F1: u32 = 0x70;
+const VK_F12: u32 = 0x7B;
+const VK_F13: u32 = 0x7C;
+const VK_F20: u32 = 0x83;
 
 /// True for the shift Windows injects around navigation keys when NumLock is on
 /// (scancode E0 2A). Real Shift keys never carry the extended flag with 0x2A;
@@ -155,9 +160,41 @@ pub fn is_fake_shift(scan: u32, extended: bool) -> bool {
     extended && (scan & 0xFF) == 0x2A
 }
 
+/// Fallback VK -> HID mapping for keys injected by remappers or keyboards that
+/// send a zero or non-standard scancode.
+fn from_win_vk_fallback(vk: u32) -> Option<Hid> {
+    Some(match vk {
+        0x08 => 0x2A, // Backspace
+        0x09 => 0x2B, // Tab
+        0x0D => 0x28, // Enter
+        0x14 => hid::CAPS_LOCK,
+        0x20 => hid::SPACE,
+        0x21 => 0x4B, // Page Up
+        0x22 => 0x4E, // Page Down
+        0x23 => 0x4D, // End
+        0x24 => 0x4A, // Home
+        0x25 => 0x50, // Left
+        0x26 => 0x52, // Up
+        0x27 => 0x4F, // Right
+        0x28 => 0x51, // Down
+        0x2C => 0x46, // PrintScreen
+        0x2D => 0x49, // Insert
+        0x2E => 0x4C, // Delete
+        0x30 => 0x27, // 0
+        0x31..=0x39 => (vk - 0x31 + 0x1E) as Hid, // 1..9
+        0x41..=0x5A => (vk - 0x41 + 0x04) as Hid, // A..Z
+        0x5D => 0x65, // Apps / Menu
+        0x91 => 0x47, // Scroll Lock
+        _ => return None,
+    })
+}
+
 /// Windows low-level hook -> HID.
 pub fn from_win(scan: u32, extended: bool, vk: u32) -> Option<Hid> {
     match vk {
+        VK_ESCAPE => return Some(0x29),
+        VK_F1..=VK_F12 => return Some((vk - VK_F1 + 0x3A) as Hid),
+        VK_F13..=VK_F20 => return Some((vk - VK_F13 + 0x68) as Hid),
         VK_HANGUL => return Some(hid::LANG1),
         VK_HANJA => return Some(hid::LANG2),
         VK_PAUSE => return Some(hid::PAUSE),
@@ -186,6 +223,7 @@ pub fn from_win(scan: u32, extended: bool, vk: u32) -> Option<Hid> {
         .iter()
         .find(|(s, e, _)| *s == scan && *e == extended)
         .map(|(_, _, h)| *h)
+        .or_else(|| from_win_vk_fallback(vk))
 }
 
 pub enum WinKey {
@@ -380,5 +418,28 @@ mod tests {
         assert_eq!(from_win(0x72, false, VK_HANGUL), Some(hid::LANG1));
         assert_eq!(from_win(0x38, true, VK_HANGUL), Some(hid::LANG1));
         assert_eq!(from_mac(0x36), Some(hid::RGUI));
+    }
+
+    #[test]
+    fn esc_and_fkeys_work_even_without_standard_scancode() {
+        // Esc: standard, zero scancode (remapper), or extended flag set.
+        assert_eq!(from_win(0x01, false, VK_ESCAPE), Some(0x29));
+        assert_eq!(from_win(0x00, false, VK_ESCAPE), Some(0x29));
+        assert_eq!(from_win(0x3A, false, VK_ESCAPE), Some(0x29));
+        assert_eq!(from_win(0x01, true, VK_ESCAPE), Some(0x29));
+        assert_eq!(to_mac(0x29), Some(0x35));
+
+        // F1..F12 and F13..F20 via VK even when scancode is 0 or extended.
+        for i in 0..12u32 {
+            let hid = (0x3A + i) as Hid;
+            assert_eq!(from_win(0, false, VK_F1 + i), Some(hid));
+            assert_eq!(from_win(0, true, VK_F1 + i), Some(hid));
+            assert!(to_mac(hid).is_some());
+        }
+        for i in 0..8u32 {
+            let hid = (0x68 + i) as Hid;
+            assert_eq!(from_win(0, false, VK_F13 + i), Some(hid));
+            assert!(to_mac(hid).is_some());
+        }
     }
 }
