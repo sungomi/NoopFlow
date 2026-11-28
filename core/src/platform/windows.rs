@@ -2,16 +2,23 @@
 
 use std::mem::size_of;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{BOOL, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, MonitorFromPoint, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST};
+use windows_sys::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+use windows_sys::Win32::UI::Shell::{
+    SHQueryUserNotificationState, QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use super::{edge_hit, emit, InputEvent, SHARED};
@@ -19,6 +26,8 @@ use crate::keys::{self, WinKey};
 use crate::protocol::{Button, Rect, Side};
 
 const MAGIC: usize = 0x4E4F_4F50; // "NOOP"
+
+static FULLSCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 struct HookState {
     last: (i32, i32),
@@ -33,6 +42,69 @@ fn any_button_down() -> bool {
             .iter()
             .any(|vk| (GetAsyncKeyState(*vk as i32) as u16) & 0x8000 != 0)
     }
+}
+
+/// Holding Ctrl or Alt while pushing the edge lets the user leave a fullscreen app on purpose.
+fn bypass_key_down() -> bool {
+    unsafe {
+        [VK_CONTROL, VK_MENU]
+            .iter()
+            .any(|vk| (GetAsyncKeyState(*vk as i32) as u16) & 0x8000 != 0)
+    }
+}
+
+/// Detect whether a game or fullscreen app currently owns the screen or confines the cursor.
+unsafe fn detect_fullscreen_or_game() -> bool {
+    // 1. Official Windows notification state (DirectX/Vulkan exclusive fullscreen or busy fullscreen)
+    let mut state = 0i32;
+    if SHQueryUserNotificationState(&mut state) == 0
+        && (state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_BUSY)
+    {
+        return true;
+    }
+
+    // 2. Cursor actively clipped to a sub-region (FPS / RTS / MOBA games)
+    let mut clip = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if GetClipCursor(&mut clip) != 0 {
+        let vs = virtual_screen();
+        let cw = clip.right - clip.left;
+        let ch = clip.bottom - clip.top;
+        if cw > 0 && ch > 0 && (cw < vs.w - 4 || ch < vs.h - 4) {
+            return true;
+        }
+    }
+
+    // 3. Borderless fullscreen foreground window covering its entire monitor
+    let hwnd = GetForegroundWindow();
+    if hwnd.is_null() {
+        return false;
+    }
+    let mut cls = [0u16; 64];
+    let len = GetClassNameW(hwnd, cls.as_mut_ptr(), cls.len() as i32) as usize;
+    if len > 0 {
+        let name = String::from_utf16_lossy(&cls[..len]);
+        if matches!(
+            name.as_str(),
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        ) {
+            return false;
+        }
+    }
+    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if GetWindowRect(hwnd, &mut wr) == 0 {
+        return false;
+    }
+    let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if mon.is_null() {
+        return false;
+    }
+    let mut mi: MONITORINFO = std::mem::zeroed();
+    mi.cbSize = size_of::<MONITORINFO>() as u32;
+    if GetMonitorInfoW(mon, &mut mi) == 0 {
+        return false;
+    }
+    let m = mi.rcMonitor;
+    wr.left <= m.left && wr.top <= m.top && wr.right >= m.right && wr.bottom >= m.bottom
 }
 
 /// Test hook: enter/leave the "controlling another computer" state without
@@ -94,8 +166,11 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         let (lx, ly) = st.last;
         st.last = (x, y);
         let mask = SHARED.neighbors.load(Ordering::Relaxed);
-        // Never switch mid-drag: the button would stay pressed on this computer.
-        if mask != 0 && !any_button_down() {
+        // Never switch mid-drag, and block edge-switching during games/fullscreen unless Ctrl/Alt is held.
+        let fs_blocked = SHARED.lock_fullscreen.load(Ordering::Relaxed)
+            && FULLSCREEN_ACTIVE.load(Ordering::Relaxed)
+            && !bypass_key_down();
+        if mask != 0 && !any_button_down() && !fs_blocked {
             if let Some((side, t)) = edge_hit(virtual_screen(), x as f64, y as f64, (x - lx) as f64, (y - ly) as f64, mask, false) {
                 SHARED.grabbing.store(true, Ordering::Relaxed);
                 let mut cur = POINT { x: 0, y: 0 };
@@ -153,6 +228,17 @@ unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LR
 }
 
 pub(crate) fn start_impl() -> anyhow::Result<()> {
+    let _ = std::thread::Builder::new().name("noopflow-fs-watch".into()).spawn(|| {
+        loop {
+            let active = if SHARED.lock_fullscreen.load(Ordering::Relaxed) {
+                unsafe { detect_fullscreen_or_game() }
+            } else {
+                false
+            };
+            FULLSCREEN_ACTIVE.store(active, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
     let (ok_tx, ok_rx) = std::sync::mpsc::channel::<bool>();
     std::thread::Builder::new().name("noopflow-hooks".into()).spawn(move || unsafe {
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

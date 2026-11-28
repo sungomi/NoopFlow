@@ -31,6 +31,8 @@ pub struct Settings {
     /// Windows: what the window's close button does: "tray" (default) or "quit".
     /// Older configs may hold "ask"; it is read as "tray".
     pub close_action: String,
+    /// Windows: prevent mouse edge-switching while a game or fullscreen app is active.
+    pub lock_fullscreen: bool,
 }
 
 impl Default for Settings {
@@ -49,6 +51,7 @@ impl Default for Settings {
             corner_guard: 6,
             mac_fn_media: false,
             close_action: "tray".into(),
+            lock_fullscreen: true,
         }
     }
 }

@@ -875,7 +875,7 @@ function mockInvoke(cmd, args) {
       active: 'mac',
       controlled_by: null,
       locked: false,
-      settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', key_layout: 'position', clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6, close_action: 'tray' },
+      settings: { right_cmd_hangul: true, lang1_hangul: true, right_alt_hangul: false, hangul_method: 'direct', key_layout: 'position', clipboard_sync: true, paste_files: true, invert_scroll: false, mouse_speed: 1.0, receive_dir: null, corner_guard: 6, close_action: 'tray', lock_fullscreen: true },
       // ?perm=install|access|input|restart previews the Mac permission banner.
       ...(() => {
         const q = new URLSearchParams(location.search).get('perm');

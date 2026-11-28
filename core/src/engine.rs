@@ -582,6 +582,7 @@ impl Engine {
     fn apply_settings(&mut self) {
         platform::set_corner_guard(self.cfg.settings.corner_guard);
         platform::set_observe_local(self.os == Os::Mac && self.cfg.settings.right_cmd_hangul);
+        platform::set_lock_fullscreen(self.cfg.settings.lock_fullscreen);
         self.receiver.set_dir(self.cfg.receive_dir());
     }
 

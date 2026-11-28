@@ -41,6 +41,7 @@ pub(crate) struct Shared {
     pub neighbors: AtomicU8,
     pub observe_local: AtomicBool,
     pub corner_guard: AtomicI32,
+    pub lock_fullscreen: AtomicBool,
     pub tx: OnceLock<UnboundedSender<InputEvent>>,
 }
 
@@ -49,6 +50,7 @@ pub(crate) static SHARED: Shared = Shared {
     neighbors: AtomicU8::new(0),
     observe_local: AtomicBool::new(false),
     corner_guard: AtomicI32::new(6),
+    lock_fullscreen: AtomicBool::new(true),
     tx: OnceLock::new(),
 };
 
@@ -66,6 +68,9 @@ pub fn set_observe_local(on: bool) {
 }
 pub fn set_corner_guard(px: i32) {
     SHARED.corner_guard.store(px.max(0), Ordering::Relaxed);
+}
+pub fn set_lock_fullscreen(on: bool) {
+    SHARED.lock_fullscreen.store(on, Ordering::Relaxed);
 }
 pub fn is_grabbing() -> bool {
     SHARED.grabbing.load(Ordering::Relaxed)
